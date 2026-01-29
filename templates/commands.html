@@ -1,0 +1,1589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>X-Plane Commands</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #fff;
+            min-height: 100vh;
+        }
+
+        .app-container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Sidebar - Command Tree */
+        .sidebar {
+            width: 500px;
+            background: #16213e;
+            border-right: 1px solid #374151;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .sidebar-header {
+            padding: 15px 20px;
+            background: #0f3460;
+            border-bottom: 1px solid #374151;
+        }
+
+        .sidebar-header h1 {
+            font-size: 1.2rem;
+            color: #e94560;
+            margin-bottom: 12px;
+        }
+
+        .header-row {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        /* Connection Status */
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #f87171;
+        }
+
+        .status-dot.connected { background: #4ade80; }
+
+        .status-text {
+            font-size: 0.8rem;
+            color: #94a3b8;
+        }
+
+        .status-text.connected { color: #4ade80; }
+
+        /* Profile Selector */
+        .profile-selector {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .profile-selector label {
+            font-size: 0.85rem;
+            color: #94a3b8;
+        }
+
+        .profile-select {
+            padding: 6px 10px;
+            background: #1a1a2e;
+            border: 1px solid #374151;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+
+        .btn-reload {
+            padding: 6px 8px;
+            background: #374151;
+            border: 1px solid #4b5563;
+            border-radius: 4px;
+            color: #94a3b8;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn-reload:hover {
+            background: #4b5563;
+            color: #fff;
+        }
+
+        .btn-reload.loading svg {
+            animation: spin 1s linear infinite;
+        }
+
+        /* Command Tree */
+        .command-tree {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .category-node {
+            margin-bottom: 8px;
+        }
+
+        .category-header {
+            display: flex;
+            align-items: center;
+            padding: 10px 12px;
+            background: #0f3460;
+            border-radius: 6px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .category-header:hover {
+            background: #1a3a5c;
+        }
+
+        .category-toggle {
+            width: 16px;
+            height: 16px;
+            margin-right: 10px;
+            color: #94a3b8;
+            transition: transform 0.2s;
+        }
+
+        .category-toggle.expanded {
+            transform: rotate(90deg);
+        }
+
+        .category-name {
+            flex: 1;
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+
+        .category-count {
+            font-size: 0.75rem;
+            color: #64748b;
+            background: #374151;
+            padding: 2px 8px;
+            border-radius: 10px;
+        }
+
+        .category-commands {
+            display: none;
+            padding: 5px 0 5px 10px;
+            border-left: 2px solid #374151;
+            margin-left: 18px;
+            margin-top: 5px;
+        }
+
+        .category-commands.expanded {
+            display: block;
+        }
+
+        /* Command Item */
+        .command-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 10px;
+            margin: 3px 0;
+            border-radius: 4px;
+            background: #1a1a2e;
+            gap: 8px;
+        }
+
+        .command-item:hover {
+            background: #252545;
+        }
+
+        .command-tokens {
+            flex: 1;
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: #e2e8f0;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .command-profile-badge {
+            font-size: 0.65rem;
+            padding: 2px 5px;
+            border-radius: 3px;
+            background: #374151;
+            color: #94a3b8;
+            flex-shrink: 0;
+        }
+
+        .command-profile-badge.zibo {
+            background: #7c3aed;
+            color: #fff;
+        }
+
+        .command-value-input {
+            width: 70px;
+            padding: 4px 8px;
+            background: #0f3460;
+            border: 1px solid #374151;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 0.8rem;
+            font-family: monospace;
+        }
+
+        .command-value-input:focus {
+            outline: none;
+            border-color: #e94560;
+        }
+
+        .btn-test-small {
+            padding: 4px 10px;
+            background: #e94560;
+            border: none;
+            border-radius: 4px;
+            color: white;
+            font-size: 0.75rem;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .btn-test-small:hover {
+            background: #ff6b6b;
+        }
+
+        .btn-test-small:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .command-status {
+            width: 60px;
+            text-align: center;
+            font-size: 0.7rem;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        .command-status.verified { color: #4ade80; }
+        .command-status.sent { color: #fbbf24; }
+        .command-status.failed { color: #f87171; }
+        .command-status.no_match { color: #f87171; }
+        .command-status.testing { color: #94a3b8; }
+
+        /* Main Content - Results Panel */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 12px 20px;
+            background: #16213e;
+            border-bottom: 1px solid #374151;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: #e94560;
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) { background: #ff6b6b; }
+
+        .btn-secondary {
+            background: #374151;
+            color: white;
+        }
+
+        .btn-secondary:hover:not(:disabled) { background: #4b5563; }
+
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-success:hover:not(:disabled) { background: #34d399; }
+
+        .toolbar-spacer { flex: 1; }
+
+        .test-stats {
+            display: flex;
+            gap: 15px;
+            font-size: 0.85rem;
+        }
+
+        .stat {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .stat-value {
+            font-weight: 600;
+        }
+
+        .stat-value.success { color: #4ade80; }
+        .stat-value.warning { color: #fbbf24; }
+        .stat-value.error { color: #f87171; }
+
+        /* Results Panel */
+        .results-panel {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .result-card {
+            background: #16213e;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+
+        .result-card h2 {
+            font-size: 1rem;
+            color: #e94560;
+            margin-bottom: 15px;
+            font-family: monospace;
+        }
+
+        .result-status-large {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 15px;
+        }
+
+        .result-status-large.verified { color: #4ade80; }
+        .result-status-large.sent { color: #fbbf24; }
+        .result-status-large.failed { color: #f87171; }
+        .result-status-large.no_match { color: #f87171; }
+
+        .result-details {
+            font-size: 0.85rem;
+            color: #94a3b8;
+            line-height: 1.8;
+        }
+
+        .result-details code {
+            background: #374151;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            color: #e2e8f0;
+        }
+
+        .result-row {
+            display: flex;
+            margin-bottom: 8px;
+        }
+
+        .result-label {
+            width: 100px;
+            color: #64748b;
+            flex-shrink: 0;
+        }
+
+        .result-value {
+            flex: 1;
+            color: #e2e8f0;
+        }
+
+        /* Test All Results */
+        .test-all-results {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .test-result-row {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px;
+            border-bottom: 1px solid #374151;
+            font-size: 0.85rem;
+        }
+
+        .test-result-tokens {
+            flex: 1;
+            font-family: monospace;
+        }
+
+        .test-result-status {
+            width: 80px;
+            text-align: center;
+            font-weight: 500;
+        }
+
+        .test-result-status.verified { color: #4ade80; }
+        .test-result-status.sent { color: #fbbf24; }
+        .test-result-status.failed, .test-result-status.no_match { color: #f87171; }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #64748b;
+        }
+
+        .empty-state h3 {
+            font-size: 1.1rem;
+            margin-bottom: 10px;
+            color: #94a3b8;
+        }
+
+        /* Loading overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .loading-overlay.hidden { display: none; }
+
+        .loading-content { text-align: center; }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #374151;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .progress-bar {
+            height: 4px;
+            background: #374151;
+            border-radius: 2px;
+            overflow: hidden;
+            width: 200px;
+            margin-top: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: #e94560;
+            transition: width 0.3s ease;
+        }
+
+        /* Speech Control Panel */
+        .speech-panel {
+            background: #16213e;
+            border-bottom: 1px solid #374151;
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .mic-button {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            border: 3px solid #374151;
+            background: #1a1a2e;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            flex-shrink: 0;
+        }
+
+        .mic-button:hover {
+            border-color: #e94560;
+            background: #252545;
+        }
+
+        .mic-button.listening {
+            border-color: #4ade80;
+            background: #1a3a2e;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .mic-button.processing {
+            border-color: #fbbf24;
+            background: #3a3a1e;
+        }
+
+        .mic-button.muted {
+            border-color: #f87171;
+            background: #3a1a1a;
+            opacity: 0.7;
+        }
+
+        .mic-button.muted .mic-icon {
+            color: #f87171;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.4); }
+            50% { transform: scale(1.05); box-shadow: 0 0 20px 10px rgba(74, 222, 128, 0.2); }
+        }
+
+        .mic-icon {
+            width: 36px;
+            height: 36px;
+            color: #94a3b8;
+            transition: color 0.3s ease;
+        }
+
+        .mic-button:hover .mic-icon { color: #e94560; }
+        .mic-button.listening .mic-icon { color: #4ade80; }
+        .mic-button.processing .mic-icon { color: #fbbf24; }
+
+        .speech-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .speech-status {
+            font-size: 0.85rem;
+            color: #64748b;
+            margin-bottom: 8px;
+        }
+
+        .speech-status.listening { color: #4ade80; }
+        .speech-status.processing { color: #fbbf24; }
+        .speech-status.error { color: #f87171; }
+
+        .speech-text {
+            font-size: 1.2rem;
+            color: #e2e8f0;
+            font-family: monospace;
+            min-height: 1.5em;
+            word-break: break-word;
+        }
+
+        .speech-text.placeholder {
+            color: #64748b;
+            font-style: italic;
+        }
+
+        .speech-result {
+            margin-top: 10px;
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            display: none;
+        }
+
+        .speech-result.show { display: block; }
+        .speech-result.verified { background: rgba(74, 222, 128, 0.15); color: #4ade80; }
+        .speech-result.sent { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+        .speech-result.partial { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+        .speech-result.failed, .speech-result.no_match { background: rgba(248, 113, 113, 0.15); color: #f87171; }
+
+        .failed-panel {
+            margin-top: 8px;
+            padding: 8px 12px;
+            font-size: 0.8rem;
+            color: #f87171;
+            background: rgba(248, 113, 113, 0.1);
+            border-left: 3px solid #f87171;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .failed-panel.show {
+            display: block;
+        }
+
+        .speech-settings {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .speech-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.8rem;
+            color: #94a3b8;
+            cursor: pointer;
+        }
+
+        .speech-toggle input {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+
+        .ai-toggle {
+            background: rgba(124, 58, 237, 0.2);
+            padding: 6px 10px;
+            border-radius: 6px;
+            border: 1px solid #7c3aed;
+        }
+
+        .ai-toggle.unavailable {
+            opacity: 0.5;
+            border-color: #374151;
+            background: transparent;
+        }
+
+        .ai-toggle.active {
+            background: rgba(124, 58, 237, 0.4);
+            border-color: #a78bfa;
+        }
+
+        #aiToggleLabel {
+            color: #a78bfa;
+        }
+
+        .ai-toggle.unavailable #aiToggleLabel {
+            color: #64748b;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar - Command Tree -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h1>X-Plane Commands</h1>
+                <div class="header-row">
+                    <div class="connection-status">
+                        <div class="status-dot" id="statusDot"></div>
+                        <span class="status-text" id="statusText">Checking...</span>
+                    </div>
+                    <div class="profile-selector">
+                        <label>Profile:</label>
+                        <select class="profile-select" id="profileSelect" onchange="changeProfile()">
+                        </select>
+                    </div>
+                    <button class="btn-reload" onclick="reloadCommands()" title="Reload commands.xml">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M23 4v6h-6M1 20v-6h6"/>
+                            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="command-tree" id="commandTree">
+                <div class="empty-state">
+                    <h3>Loading Commands...</h3>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content - Results -->
+        <div class="main-content">
+            <!-- Speech Control Panel -->
+            <div class="speech-panel">
+                <button class="mic-button" id="micButton" onclick="toggleListening()">
+                    <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                        <line x1="12" y1="19" x2="12" y2="23"/>
+                        <line x1="8" y1="23" x2="16" y2="23"/>
+                    </svg>
+                </button>
+                <div class="speech-info">
+                    <div class="speech-status" id="speechStatus">Click microphone to start listening</div>
+                    <div class="speech-text placeholder" id="speechText">Say a command like "beacon on" or "flaps 5"</div>
+                    <div class="speech-result" id="speechResult"></div>
+                    <div class="failed-panel" id="failedPanel"></div>
+                </div>
+                <div class="speech-settings">
+                    <label class="speech-toggle ai-toggle">
+                        <input type="checkbox" id="aiCopilot" onchange="checkAiAvailability()">
+                        <span id="aiToggleLabel">AI Copilot</span>
+                    </label>
+                    <label class="speech-toggle">
+                        <input type="checkbox" id="continuousListen" onchange="toggleContinuousListen()">
+                        Continuous
+                    </label>
+                    <label class="speech-toggle">
+                        <input type="checkbox" id="speakResponse" checked>
+                        Speak response
+                    </label>
+                </div>
+            </div>
+
+            <div class="toolbar">
+                <button class="btn btn-success" onclick="testAllCommands()">Test All Commands</button>
+                <button class="btn btn-secondary" onclick="clearAllResults()">Clear All Results</button>
+                <div class="toolbar-spacer"></div>
+                <div class="test-stats">
+                    <div class="stat">
+                        <span>Verified:</span>
+                        <span class="stat-value success" id="statVerified">0</span>
+                    </div>
+                    <div class="stat">
+                        <span>Sent:</span>
+                        <span class="stat-value warning" id="statSent">0</span>
+                    </div>
+                    <div class="stat">
+                        <span>Failed:</span>
+                        <span class="stat-value error" id="statFailed">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="results-panel" id="resultsPanel">
+                <div class="empty-state">
+                    <h3>Test Results</h3>
+                    <p>Click "Test" on any command to see results here</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay hidden" id="loadingOverlay">
+        <div class="loading-content">
+            <div class="spinner"></div>
+            <div id="loadingText">Loading...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let connected = false;
+        let commandsData = null;
+        let allProfiles = [];
+        let testResults = {};
+
+        // Speech Recognition
+        let recognition = null;
+        let isListening = false;
+        let isSpeaking = false;
+        let continuousMode = false;
+        let speechSynthesis = window.speechSynthesis;
+
+        // AI Copilot state
+        let aiAvailable = false;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', async () => {
+            await checkConnection();
+            await loadCommands();
+            await checkAiAvailability();
+            setInterval(checkConnection, 10000);
+            initSpeechRecognition();
+        });
+
+        async function checkAiAvailability() {
+            try {
+                const resp = await fetch('/api/ai/status');
+                const data = await resp.json();
+                aiAvailable = data.available;
+
+                const toggle = document.querySelector('.ai-toggle');
+                const checkbox = document.getElementById('aiCopilot');
+                const label = document.getElementById('aiToggleLabel');
+
+                if (aiAvailable) {
+                    toggle.classList.remove('unavailable');
+                    checkbox.disabled = false;
+                    label.textContent = 'AI Copilot';
+
+                    if (checkbox.checked) {
+                        toggle.classList.add('active');
+                    } else {
+                        toggle.classList.remove('active');
+                    }
+                } else {
+                    toggle.classList.add('unavailable');
+                    toggle.classList.remove('active');
+                    checkbox.disabled = true;
+                    checkbox.checked = false;
+                    label.textContent = 'AI Copilot (no API key)';
+                }
+            } catch (e) {
+                console.error('Failed to check AI status:', e);
+                aiAvailable = false;
+            }
+        }
+
+        // Initialize Speech Recognition
+        function initSpeechRecognition() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+            if (!SpeechRecognition) {
+                document.getElementById('speechStatus').textContent = 'Speech recognition not supported in this browser';
+                document.getElementById('speechStatus').className = 'speech-status error';
+                document.getElementById('micButton').disabled = true;
+                return;
+            }
+
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+
+            recognition.onstart = () => {
+                isListening = true;
+                updateMicUI('listening');
+                document.getElementById('speechStatus').textContent = 'Listening...';
+                document.getElementById('speechStatus').className = 'speech-status listening';
+                document.getElementById('speechText').textContent = '';
+                document.getElementById('speechText').className = 'speech-text';
+                document.getElementById('speechResult').className = 'speech-result';
+            };
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let finalTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript;
+                    } else {
+                        interimTranscript += transcript;
+                    }
+                }
+
+                // Show interim results
+                if (interimTranscript) {
+                    document.getElementById('speechText').textContent = interimTranscript;
+                }
+
+                // Process final result
+                if (finalTranscript) {
+                    document.getElementById('speechText').textContent = finalTranscript;
+                    processVoiceCommand(finalTranscript.trim());
+                }
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                isListening = false;
+                updateMicUI('idle');
+
+                if (event.error === 'no-speech') {
+                    document.getElementById('speechStatus').textContent = 'No speech detected. Click to try again.';
+                } else if (event.error === 'not-allowed') {
+                    document.getElementById('speechStatus').textContent = 'Microphone access denied. Please allow microphone access.';
+                    document.getElementById('speechStatus').className = 'speech-status error';
+                } else {
+                    document.getElementById('speechStatus').textContent = `Error: ${event.error}`;
+                }
+            };
+
+            recognition.onend = () => {
+                isListening = false;
+                if (!isSpeaking && continuousMode) {
+                    // Restart listening in continuous mode
+                    setTimeout(() => {
+                        startListeningIfContinuous();
+                    }, 100);
+                } else if (!continuousMode) {
+                    updateMicUI('idle');
+                    document.getElementById('speechStatus').textContent = 'Click microphone to start listening';
+                }
+            };
+        }
+
+        function toggleListening() {
+            if (!recognition) {
+                alert('Speech recognition not available');
+                return;
+            }
+
+            if (isListening) {
+                recognition.stop();
+                isListening = false;
+                continuousMode = false;
+                document.getElementById('continuousListen').checked = false;
+                updateMicUI('idle');
+                document.getElementById('speechStatus').textContent = 'Click microphone to start listening';
+            } else {
+                try {
+                    recognition.start();
+                } catch (e) {
+                    console.error('Failed to start recognition:', e);
+                }
+            }
+        }
+
+        function toggleContinuousListen() {
+            continuousMode = document.getElementById('continuousListen').checked;
+
+            if (continuousMode) {
+                // Start continuous listening
+                recognition.continuous = true;
+                if (!isListening) {
+                    try {
+                        recognition.start();
+                    } catch (e) {
+                        console.error('Failed to start continuous recognition:', e);
+                    }
+                }
+            } else {
+                // Stop continuous mode
+                recognition.continuous = false;
+                if (isListening) {
+                    recognition.stop();
+                }
+            }
+        }
+
+        function startListeningIfContinuous() {
+            if (continuousMode && !isListening && !isSpeaking) {
+                try {
+                    recognition.continuous = true;
+                    recognition.start();
+                } catch (e) {
+                    // Already started, ignore
+                }
+            }
+        }
+
+        function updateMicUI(state) {
+            const btn = document.getElementById('micButton');
+            btn.classList.remove('listening', 'processing', 'muted');
+            if (state === 'listening') {
+                btn.classList.add('listening');
+            } else if (state === 'processing') {
+                btn.classList.add('processing');
+            } else if (state === 'muted') {
+                btn.classList.add('muted');
+            }
+        }
+
+        async function processVoiceCommand(text) {
+            updateMicUI('processing');
+
+            // Clear failed panel before processing new command
+            const failedPanel = document.getElementById('failedPanel');
+            failedPanel.textContent = '';
+            failedPanel.classList.remove('show');
+
+            const useAi = document.getElementById('aiCopilot').checked && aiAvailable;
+
+            if (useAi) {
+                document.getElementById('speechStatus').textContent = 'AI interpreting command...';
+            } else {
+                document.getElementById('speechStatus').textContent = 'Processing command...';
+            }
+            document.getElementById('speechStatus').className = 'speech-status processing';
+
+            try {
+                const formData = new FormData();
+                formData.append('text', text);
+
+                // Use AI endpoint or direct execution
+                const endpoint = useAi ? '/api/ai/execute' : '/api/extplane/execute';
+
+                const resp = await fetch(endpoint, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await resp.json();
+
+                // Show result
+                const resultEl = document.getElementById('speechResult');
+                let responseText = '';
+
+                // Format interpreted command(s) for display
+                const formatInterpreted = (interp) => {
+                    if (Array.isArray(interp)) {
+                        return interp.join(' and ');
+                    }
+                    return interp;
+                };
+
+                let shouldSpeak = true;
+                const failedPanel = document.getElementById('failedPanel');
+
+                if (data.status === 'verified') {
+                    resultEl.className = 'speech-result show verified';
+                    if (useAi && data.interpreted) {
+                        responseText = `${formatInterpreted(data.interpreted)} verified`;
+                    } else if (data.matched_tokens) {
+                        responseText = `${data.matched_tokens.join(' ')} verified`;
+                    } else {
+                        responseText = 'Command verified';
+                    }
+                } else if (data.status === 'sent') {
+                    resultEl.className = 'speech-result show sent';
+                    if (useAi && data.interpreted) {
+                        responseText = `${formatInterpreted(data.interpreted)} sent`;
+                    } else if (data.matched_tokens) {
+                        responseText = `${data.matched_tokens.join(' ')} sent`;
+                    } else {
+                        responseText = 'Command sent';
+                    }
+                } else if (data.status === 'partial') {
+                    // Some commands succeeded, some failed - only speak success
+                    resultEl.className = 'speech-result show sent';
+                    if (data.succeeded?.length) {
+                        responseText = `${data.succeeded.join(' and ')} executed`;
+                    } else {
+                        responseText = '';
+                        shouldSpeak = false;
+                    }
+                    // Show failed in panel, don't speak
+                    if (data.failed?.length) {
+                        failedPanel.textContent = `Could not match: ${data.failed.join(', ')}`;
+                        failedPanel.classList.add('show');
+                    }
+                } else if (data.status === 'no_match') {
+                    resultEl.className = 'speech-result show no_match';
+                    // Don't speak, show in panel
+                    failedPanel.textContent = useAi ? `Could not match: "${text}"` : 'Command not recognized';
+                    failedPanel.classList.add('show');
+                    responseText = '';
+                    shouldSpeak = false;
+                } else {
+                    resultEl.className = 'speech-result show failed';
+                    // Don't speak failures, show in panel
+                    if (data.failed?.length) {
+                        failedPanel.textContent = `Could not match: ${data.failed.join(', ')}`;
+                    } else {
+                        failedPanel.textContent = 'Command failed';
+                    }
+                    failedPanel.classList.add('show');
+                    responseText = '';
+                    shouldSpeak = false;
+                }
+
+                resultEl.textContent = responseText;
+
+                const statusText = useAi ? 'AI processed command' : 'Command processed';
+                document.getElementById('speechStatus').textContent = statusText;
+                document.getElementById('speechStatus').className = 'speech-status';
+
+                // Speak the response (this will pause listening and resume in continuous mode)
+                // Only speak if we have something to say and shouldSpeak is true
+                if (document.getElementById('speakResponse').checked && shouldSpeak && responseText) {
+                    speak(responseText);
+                } else if (continuousMode) {
+                    // If not speaking but in continuous mode, restart listening
+                    setTimeout(() => {
+                        startListeningIfContinuous();
+                    }, 300);
+                } else {
+                    updateMicUI('idle');
+                }
+
+            } catch (e) {
+                console.error('Error processing command:', e);
+                document.getElementById('speechStatus').textContent = 'Error processing command';
+                document.getElementById('speechStatus').className = 'speech-status error';
+                document.getElementById('speechResult').textContent = e.message;
+                document.getElementById('speechResult').className = 'speech-result show failed';
+
+                if (continuousMode) {
+                    setTimeout(() => {
+                        startListeningIfContinuous();
+                    }, 1000);
+                } else {
+                    updateMicUI('idle');
+                }
+            }
+        }
+
+        function speak(text) {
+            if (!speechSynthesis) return;
+
+            // Cancel any ongoing speech
+            speechSynthesis.cancel();
+
+            // Mute mic while speaking - stop recognition completely
+            isSpeaking = true;
+            if (isListening) {
+                recognition.stop();
+            }
+            updateMicUI('muted');
+            document.getElementById('speechStatus').textContent = 'Speaking...';
+
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = 1.1;
+            utterance.pitch = 1.0;
+            utterance.volume = 1.0;
+
+            utterance.onend = () => {
+                isSpeaking = false;
+                // Resume listening if in continuous mode
+                if (continuousMode) {
+                    setTimeout(() => {
+                        startListeningIfContinuous();
+                    }, 300);
+                } else {
+                    updateMicUI('idle');
+                    document.getElementById('speechStatus').textContent = 'Click microphone to start listening';
+                }
+            };
+
+            utterance.onerror = () => {
+                isSpeaking = false;
+                if (continuousMode) {
+                    startListeningIfContinuous();
+                } else {
+                    updateMicUI('idle');
+                }
+            };
+
+            speechSynthesis.speak(utterance);
+        }
+
+        // Connection
+        async function checkConnection() {
+            try {
+                const resp = await fetch('/api/extplane/status');
+                const data = await resp.json();
+                const wasConnected = connected;
+                connected = data.connected;
+                updateConnectionUI();
+
+                if (!connected && !wasConnected) {
+                    await fetch('/api/extplane/connect', { method: 'POST' });
+                    setTimeout(checkConnection, 1000);
+                }
+            } catch (e) {
+                connected = false;
+                updateConnectionUI();
+            }
+        }
+
+        function updateConnectionUI() {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            dot.className = 'status-dot' + (connected ? ' connected' : '');
+            text.className = 'status-text' + (connected ? ' connected' : '');
+            text.textContent = connected ? 'Connected' : 'Disconnected';
+        }
+
+        // Load Commands
+        async function loadCommands() {
+            try {
+                const resp = await fetch('/api/commands');
+                commandsData = await resp.json();
+
+                // Store all profiles
+                allProfiles = commandsData.profiles;
+
+                // Populate profile selector with ALL profiles
+                const select = document.getElementById('profileSelect');
+                select.innerHTML = allProfiles.map(p =>
+                    `<option value="${p}" ${p === commandsData.active_profile ? 'selected' : ''}>${p}</option>`
+                ).join('');
+
+                renderCommandTree();
+            } catch (e) {
+                console.error('Failed to load commands:', e);
+            }
+        }
+
+        async function reloadCommands() {
+            const btn = document.querySelector('.btn-reload');
+            btn.classList.add('loading');
+
+            try {
+                const resp = await fetch('/api/commands/reload', { method: 'POST' });
+                const data = await resp.json();
+
+                if (data.status === 'reloaded') {
+                    // Reload the commands display
+                    await loadCommands();
+                    document.getElementById('speechStatus').textContent = `Reloaded ${data.total_commands} commands`;
+                }
+            } catch (e) {
+                console.error('Failed to reload commands:', e);
+                document.getElementById('speechStatus').textContent = 'Failed to reload commands';
+                document.getElementById('speechStatus').className = 'speech-status error';
+            } finally {
+                btn.classList.remove('loading');
+            }
+        }
+
+        async function changeProfile() {
+            const profileName = document.getElementById('profileSelect').value;
+            try {
+                await fetch(`/api/xplane/profiles/${encodeURIComponent(profileName)}/activate`, {
+                    method: 'POST'
+                });
+                // Reload commands but keep all profiles in dropdown
+                const resp = await fetch('/api/commands');
+                commandsData = await resp.json();
+
+                // Re-populate with all profiles (not just from new response)
+                const select = document.getElementById('profileSelect');
+                select.innerHTML = allProfiles.map(p =>
+                    `<option value="${p}" ${p === profileName ? 'selected' : ''}>${p}</option>`
+                ).join('');
+
+                renderCommandTree();
+            } catch (e) {
+                console.error('Failed to change profile:', e);
+            }
+        }
+
+        // Render Command Tree
+        function renderCommandTree() {
+            const tree = document.getElementById('commandTree');
+            const activeProfile = document.getElementById('profileSelect').value;
+
+            const profileCommands = commandsData.commands_by_profile[activeProfile] || {};
+            const xplaneCommands = commandsData.commands_by_profile['X-Plane'] || {};
+
+            const allCategories = new Set([...Object.keys(profileCommands), ...Object.keys(xplaneCommands)]);
+
+            let html = '';
+            for (const category of [...allCategories].sort()) {
+                const profileCmds = profileCommands[category] || [];
+                const xplaneCmds = xplaneCommands[category] || [];
+
+                const profileTokens = new Set(profileCmds.map(c => c.tokens));
+                const uniqueXplaneCmds = activeProfile !== 'X-Plane'
+                    ? xplaneCmds.filter(c => !profileTokens.has(c.tokens))
+                    : [];
+
+                const allCmds = [...profileCmds, ...uniqueXplaneCmds];
+                if (allCmds.length === 0) continue;
+
+                const categoryId = category.replace(/[^a-zA-Z0-9]/g, '_');
+                html += `
+                    <div class="category-node">
+                        <div class="category-header" onclick="toggleCategory('${categoryId}')">
+                            <svg class="category-toggle" id="toggle_${categoryId}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M9 18l6-6-6-6"/>
+                            </svg>
+                            <span class="category-name">${category}</span>
+                            <span class="category-count">${allCmds.length}</span>
+                        </div>
+                        <div class="category-commands" id="commands_${categoryId}">
+                            ${allCmds.map(cmd => renderCommandItem(cmd)).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            tree.innerHTML = html || '<div class="empty-state"><h3>No Commands Found</h3></div>';
+        }
+
+        function renderCommandItem(cmd) {
+            const cmdId = cmd.tokens.replace(/[^a-zA-Z0-9]/g, '_');
+            const isZibo = cmd.profile !== 'X-Plane';
+            const result = testResults[cmd.tokens];
+            const statusText = result ? result.status : '';
+            const statusClass = statusText ? `command-status ${statusText}` : 'command-status';
+
+            return `
+                <div class="command-item" id="cmd_${cmdId}">
+                    <span class="command-tokens" title="${cmd.tokens}">${cmd.tokens}</span>
+                    <span class="command-profile-badge ${isZibo ? 'zibo' : ''}">${cmd.profile === 'X-Plane' ? 'XP' : 'Zibo'}</span>
+                    ${cmd.requires_value ? `
+                        <input type="text" class="command-value-input" id="val_${cmdId}"
+                               value="${cmd.test_value}" placeholder="${cmd.value_type || 'value'}"
+                               onclick="event.stopPropagation()">
+                    ` : ''}
+                    <button class="btn-test-small" onclick="event.stopPropagation(); testCommand('${cmd.tokens.replace(/'/g, "\\'")}', '${cmdId}')">Test</button>
+                    <span class="${statusClass}" id="status_${cmdId}">${statusText}</span>
+                </div>
+            `;
+        }
+
+        function toggleCategory(categoryId) {
+            const toggle = document.getElementById('toggle_' + categoryId);
+            const commands = document.getElementById('commands_' + categoryId);
+            toggle.classList.toggle('expanded');
+            commands.classList.toggle('expanded');
+        }
+
+        // Test single command
+        async function testCommand(tokens, cmdId) {
+            // Clear previous result display
+            clearResultDisplay();
+
+            // Find command data
+            let cmd = null;
+            for (const profile of Object.values(commandsData.commands_by_profile)) {
+                for (const category of Object.values(profile)) {
+                    for (const c of category) {
+                        if (c.tokens === tokens) {
+                            cmd = c;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!cmd) return;
+
+            // Get value if needed
+            let testValue = '';
+            if (cmd.requires_value) {
+                const valInput = document.getElementById('val_' + cmdId);
+                testValue = valInput ? valInput.value : cmd.test_value;
+            }
+
+            // Build command text
+            const cmdText = cmd.test_phrase || cmd.tokens.replace(/_/g, ' ').toLowerCase();
+            const fullCommand = testValue ? `${cmdText} ${testValue}` : cmdText;
+
+            // Update status to testing
+            const statusEl = document.getElementById('status_' + cmdId);
+            if (statusEl) {
+                statusEl.textContent = '...';
+                statusEl.className = 'command-status testing';
+            }
+
+            try {
+                const formData = new FormData();
+                formData.append('text', fullCommand);
+
+                const resp = await fetch('/api/extplane/execute', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await resp.json();
+
+                testResults[tokens] = { status: data.status, data: data };
+
+                // Update inline status
+                if (statusEl) {
+                    statusEl.textContent = data.status;
+                    statusEl.className = `command-status ${data.status}`;
+                }
+
+                // Show result in panel
+                showResult(cmd, data, fullCommand);
+                updateStats();
+
+            } catch (e) {
+                testResults[tokens] = { status: 'error', data: { detail: e.message } };
+                if (statusEl) {
+                    statusEl.textContent = 'error';
+                    statusEl.className = 'command-status failed';
+                }
+                updateStats();
+            }
+        }
+
+        function clearResultDisplay() {
+            const panel = document.getElementById('resultsPanel');
+            panel.innerHTML = `
+                <div class="empty-state">
+                    <h3>Test Results</h3>
+                    <p>Testing...</p>
+                </div>
+            `;
+        }
+
+        function showResult(cmd, data, testedCommand) {
+            const panel = document.getElementById('resultsPanel');
+
+            const statusClass = data.status === 'verified' ? 'verified' :
+                               data.status === 'sent' ? 'sent' : 'failed';
+
+            let details = [];
+            details.push(`<div class="result-row"><span class="result-label">Tested:</span><span class="result-value"><code>${testedCommand}</code></span></div>`);
+            details.push(`<div class="result-row"><span class="result-label">Profile:</span><span class="result-value">${cmd.profile}</span></div>`);
+
+            if (data.matched_tokens?.length > 0) {
+                details.push(`<div class="result-row"><span class="result-label">Tokens:</span><span class="result-value"><code>${data.matched_tokens.join(' ')}</code></span></div>`);
+            }
+
+            if (data.commands_sent?.length > 0) {
+                details.push(`<div class="result-row"><span class="result-label">Commands:</span><span class="result-value">${data.commands_sent.length} sent</span></div>`);
+            }
+
+            if (data.datarefs_set?.length > 0) {
+                for (const dr of data.datarefs_set) {
+                    details.push(`<div class="result-row"><span class="result-label">Set:</span><span class="result-value"><code>${dr.dataref} = ${dr.value}</code></span></div>`);
+                }
+            }
+
+            if (data.dataref_changes?.length > 0) {
+                for (const change of data.dataref_changes) {
+                    details.push(`<div class="result-row"><span class="result-label">Changed:</span><span class="result-value"><code>${change.dataref}</code>: ${change.before} → ${change.after}</span></div>`);
+                }
+            }
+
+            panel.innerHTML = `
+                <div class="result-card">
+                    <h2>${cmd.tokens}</h2>
+                    <div class="result-status-large ${statusClass}">${data.status.toUpperCase()}</div>
+                    <div class="result-details">
+                        ${details.join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Test All Commands
+        async function testAllCommands() {
+            if (!commandsData) return;
+
+            const overlay = document.getElementById('loadingOverlay');
+            const loadingText = document.getElementById('loadingText');
+            const progressFill = document.getElementById('progressFill');
+
+            overlay.classList.remove('hidden');
+            testResults = {};
+            updateStats();
+
+            const activeProfile = document.getElementById('profileSelect').value;
+            const profileCommands = commandsData.commands_by_profile[activeProfile] || {};
+            const xplaneCommands = commandsData.commands_by_profile['X-Plane'] || {};
+
+            const allCommands = [];
+            const profileTokens = new Set();
+
+            for (const category of Object.values(profileCommands)) {
+                for (const cmd of category) {
+                    allCommands.push(cmd);
+                    profileTokens.add(cmd.tokens);
+                }
+            }
+
+            if (activeProfile !== 'X-Plane') {
+                for (const category of Object.values(xplaneCommands)) {
+                    for (const cmd of category) {
+                        if (!profileTokens.has(cmd.tokens)) {
+                            allCommands.push(cmd);
+                        }
+                    }
+                }
+            }
+
+            const total = allCommands.length;
+            let completed = 0;
+
+            for (const cmd of allCommands) {
+                loadingText.textContent = `Testing ${completed + 1}/${total}: ${cmd.tokens}`;
+                progressFill.style.width = `${(completed / total) * 100}%`;
+
+                const cmdId = cmd.tokens.replace(/[^a-zA-Z0-9]/g, '_');
+
+                try {
+                    const testValue = cmd.requires_value ? cmd.test_value : '';
+                    const cmdText = cmd.test_phrase || cmd.tokens.replace(/_/g, ' ').toLowerCase();
+                    const fullCommand = testValue ? `${cmdText} ${testValue}` : cmdText;
+
+                    const formData = new FormData();
+                    formData.append('text', fullCommand);
+
+                    const resp = await fetch('/api/extplane/execute', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await resp.json();
+
+                    testResults[cmd.tokens] = { status: data.status, data: data };
+
+                    // Update inline status
+                    const statusEl = document.getElementById('status_' + cmdId);
+                    if (statusEl) {
+                        statusEl.textContent = data.status;
+                        statusEl.className = `command-status ${data.status}`;
+                    }
+                } catch (e) {
+                    testResults[cmd.tokens] = { status: 'error', data: { detail: e.message } };
+                }
+
+                completed++;
+                updateStats();
+                await new Promise(r => setTimeout(r, 50));
+            }
+
+            progressFill.style.width = '100%';
+            loadingText.textContent = 'Complete!';
+
+            setTimeout(() => {
+                overlay.classList.add('hidden');
+                showTestAllResults();
+            }, 500);
+        }
+
+        function showTestAllResults() {
+            const panel = document.getElementById('resultsPanel');
+
+            const verified = Object.values(testResults).filter(r => r.status === 'verified').length;
+            const sent = Object.values(testResults).filter(r => r.status === 'sent').length;
+            const failed = Object.values(testResults).filter(r => !['verified', 'sent'].includes(r.status)).length;
+
+            const failedList = Object.entries(testResults)
+                .filter(([_, r]) => !['verified', 'sent'].includes(r.status))
+                .map(([tokens, r]) => `
+                    <div class="test-result-row">
+                        <span class="test-result-tokens">${tokens}</span>
+                        <span class="test-result-status ${r.status}">${r.status}</span>
+                    </div>
+                `).join('');
+
+            panel.innerHTML = `
+                <div class="result-card">
+                    <h2>Test Results Summary</h2>
+                    <div class="result-details">
+                        <div class="result-row"><span class="result-label">Total:</span><span class="result-value">${Object.keys(testResults).length}</span></div>
+                        <div class="result-row"><span class="result-label">Verified:</span><span class="result-value" style="color:#4ade80">${verified}</span></div>
+                        <div class="result-row"><span class="result-label">Sent:</span><span class="result-value" style="color:#fbbf24">${sent}</span></div>
+                        <div class="result-row"><span class="result-label">Failed:</span><span class="result-value" style="color:#f87171">${failed}</span></div>
+                    </div>
+                </div>
+                ${failed > 0 ? `
+                <div class="result-card">
+                    <h2>Failed Commands</h2>
+                    <div class="test-all-results">
+                        ${failedList}
+                    </div>
+                </div>
+                ` : ''}
+            `;
+        }
+
+        function clearAllResults() {
+            testResults = {};
+            updateStats();
+
+            // Clear inline statuses
+            document.querySelectorAll('.command-status').forEach(el => {
+                el.textContent = '';
+                el.className = 'command-status';
+            });
+
+            // Clear results panel
+            document.getElementById('resultsPanel').innerHTML = `
+                <div class="empty-state">
+                    <h3>Test Results</h3>
+                    <p>Click "Test" on any command to see results here</p>
+                </div>
+            `;
+        }
+
+        function updateStats() {
+            const verified = Object.values(testResults).filter(r => r.status === 'verified').length;
+            const sent = Object.values(testResults).filter(r => r.status === 'sent').length;
+            const failed = Object.values(testResults).filter(r => !['verified', 'sent'].includes(r.status)).length;
+
+            document.getElementById('statVerified').textContent = verified;
+            document.getElementById('statSent').textContent = sent;
+            document.getElementById('statFailed').textContent = failed;
+        }
+    </script>
+</body>
+</html>

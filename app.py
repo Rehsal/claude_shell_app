@@ -1,0 +1,1200 @@
+"""
+Claude Shell App - A development shell for managing projects with persistent state.
+
+Includes X-Plane Copilot integration for XPRemote commands.
+Now uses ScriptExecutor for full script execution.
+"""
+
+import json
+import os
+import shutil
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+# X-Plane integration
+from src.xplane import XPlaneConfig, CommandsLoader, ChecklistRunner
+from src.xplane.command_categories import categorize_commands
+from src.xplane.extplane_client import get_client, ExtPlaneClient
+from src.xplane.script_executor import ScriptExecutor
+
+load_dotenv()
+
+app = FastAPI(title="Claude Shell App", version="1.0.0")
+
+# Initialize X-Plane commands loader (singleton)
+xplane_config = XPlaneConfig()
+commands_loader = CommandsLoader(xplane_config)
+
+# Configuration
+APP_DATA_DIR = Path(os.getenv("APP_DATA_DIR", "./data"))
+PROJECTS_DIR = APP_DATA_DIR / "projects"
+UPLOADS_DIR = APP_DATA_DIR / "uploads"
+
+# Ensure directories exist
+PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+def get_project_path(project_id: str) -> Path:
+    """Get the path to a project's JSON file."""
+    return PROJECTS_DIR / f"{project_id}.json"
+
+
+def load_project(project_id: str) -> dict:
+    """Load a project from disk."""
+    path = get_project_path(project_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Project not found")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_project(project_id: str, data: dict) -> None:
+    """Save a project to disk atomically."""
+    path = get_project_path(project_id)
+    temp_path = path.with_suffix(".tmp")
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    temp_path.replace(path)
+
+
+def add_log_entry(project: dict, kind: str, message: str) -> None:
+    """Add an entry to the project's session log."""
+    if "log" not in project:
+        project["log"] = []
+    project["log"].append({
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "kind": kind,
+        "message": message
+    })
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    """Serve the main UI."""
+    with open("templates/index.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+
+@app.get("/commands", response_class=HTMLResponse)
+async def copilot():
+    """Serve the X-Plane Copilot command browser."""
+    with open("templates/commands.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+
+@app.get("/api/projects")
+async def list_projects():
+    """List all projects."""
+    projects = []
+    for path in PROJECTS_DIR.glob("*.json"):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                projects.append({
+                    "id": data["id"],
+                    "name": data["name"],
+                    "description": data.get("description", ""),
+                    "created_at": data["created_at"]
+                })
+        except (json.JSONDecodeError, KeyError):
+            continue
+    return sorted(projects, key=lambda x: x["created_at"], reverse=True)
+
+
+@app.post("/api/projects")
+async def create_project(name: str = Form(...), description: str = Form("")):
+    """Create a new project."""
+    project_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat() + "Z"
+
+    project = {
+        "id": project_id,
+        "name": name,
+        "description": description,
+        "created_at": now,
+        "updated_at": now,
+        "notes": "",
+        "pins": [],
+        "uploads": [],
+        "log": []
+    }
+
+    add_log_entry(project, "project_created", f"Project '{name}' created")
+    save_project(project_id, project)
+
+    # Create uploads directory for this project
+    (UPLOADS_DIR / project_id).mkdir(parents=True, exist_ok=True)
+
+    return project
+
+
+@app.get("/api/projects/{project_id}")
+async def get_project(project_id: str):
+    """Get a single project."""
+    return load_project(project_id)
+
+
+@app.post("/api/projects/{project_id}/notes")
+async def update_notes(project_id: str, notes: str = Form(...)):
+    """Update project notes."""
+    project = load_project(project_id)
+    project["notes"] = notes
+    project["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    add_log_entry(project, "notes_updated", "Notes updated")
+    save_project(project_id, project)
+    return {"status": "ok", "notes": notes}
+
+
+@app.post("/api/projects/{project_id}/pin")
+async def add_pin(project_id: str, title: str = Form(...), content: str = Form(...)):
+    """Add a pinned prompt to the project."""
+    project = load_project(project_id)
+
+    pin_id = str(uuid.uuid4())
+    pin = {
+        "id": pin_id,
+        "title": title,
+        "content": content,
+        "created_at": datetime.utcnow().isoformat() + "Z"
+    }
+
+    if "pins" not in project:
+        project["pins"] = []
+    project["pins"].append(pin)
+    project["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    add_log_entry(project, "pin_added", f"Pin '{title}' added")
+    save_project(project_id, project)
+
+    return pin
+
+
+@app.delete("/api/projects/{project_id}/pin/{pin_id}")
+async def delete_pin(project_id: str, pin_id: str):
+    """Delete a pinned prompt."""
+    project = load_project(project_id)
+
+    pins = project.get("pins", [])
+    original_len = len(pins)
+    project["pins"] = [p for p in pins if p["id"] != pin_id]
+
+    if len(project["pins"]) == original_len:
+        raise HTTPException(status_code=404, detail="Pin not found")
+
+    project["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    add_log_entry(project, "pin_deleted", f"Pin deleted")
+    save_project(project_id, project)
+
+    return {"status": "ok"}
+
+
+@app.post("/api/projects/{project_id}/upload")
+async def upload_file(
+    project_id: str,
+    file: UploadFile = File(...),
+    label: str = Form("")
+):
+    """Upload a file to the project."""
+    project = load_project(project_id)
+
+    # Create upload directory for project if needed
+    upload_dir = UPLOADS_DIR / project_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate unique filename
+    file_id = str(uuid.uuid4())
+    original_name = file.filename or "unnamed"
+    ext = Path(original_name).suffix
+    stored_name = f"{file_id}{ext}"
+    file_path = upload_dir / stored_name
+
+    # Save file
+    with open(file_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+
+    # Record metadata
+    upload_meta = {
+        "id": file_id,
+        "original_name": original_name,
+        "stored_name": stored_name,
+        "label": label or original_name,
+        "size": len(content),
+        "path": str(file_path.relative_to(APP_DATA_DIR)),
+        "uploaded_at": datetime.utcnow().isoformat() + "Z"
+    }
+
+    if "uploads" not in project:
+        project["uploads"] = []
+    project["uploads"].append(upload_meta)
+    project["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    add_log_entry(project, "file_uploaded", f"File '{original_name}' uploaded")
+    save_project(project_id, project)
+
+    return upload_meta
+
+
+@app.get("/api/projects/{project_id}/export")
+async def export_project(project_id: str):
+    """Export project as JSON with upload paths."""
+    project = load_project(project_id)
+
+    # Add full upload paths
+    export_data = project.copy()
+    export_data["upload_paths"] = [
+        str(UPLOADS_DIR / project_id / u["stored_name"])
+        for u in project.get("uploads", [])
+    ]
+
+    return JSONResponse(
+        content=export_data,
+        headers={
+            "Content-Disposition": f'attachment; filename="{project["name"]}_export.json"'
+        }
+    )
+
+
+@app.post("/api/projects/{project_id}/log")
+async def add_log(project_id: str, kind: str = Form(...), message: str = Form(...)):
+    """Add a custom log entry."""
+    project = load_project(project_id)
+    add_log_entry(project, kind, message)
+    project["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    save_project(project_id, project)
+    return {"status": "ok"}
+
+
+# =============================================================================
+# X-Plane Copilot API Endpoints
+# =============================================================================
+
+@app.get("/api/xplane/status")
+async def xplane_status():
+    """Get X-Plane configuration and commands loader status."""
+    validation = xplane_config.validate()
+    stats = commands_loader.get_stats()
+    return {
+        "config_valid": validation["valid"],
+        "config_errors": validation["errors"],
+        "stats": stats,
+        "extplane": {
+            "host": xplane_config.extplane_host,
+            "port": xplane_config.extplane_port
+        }
+    }
+
+
+@app.post("/api/xplane/reload")
+async def xplane_reload():
+    """Reload commands.xml from disk."""
+    success = commands_loader.reload()
+    if success:
+        return {
+            "status": "ok",
+            "message": "Commands reloaded successfully",
+            "stats": commands_loader.get_stats()
+        }
+    else:
+        raise HTTPException(status_code=500, detail="Failed to reload commands.xml")
+
+
+@app.get("/api/xplane/profiles")
+async def xplane_profiles():
+    """List available aircraft profiles."""
+    profiles = []
+    for name in commands_loader.profile_names:
+        profile = commands_loader.get_profile(name)
+        if profile:
+            profiles.append({
+                "name": profile.name,
+                "authors": profile.authors,
+                "description": profile.description,
+                "token_count": len(profile.tokens),
+                "command_count": len(profile.commands),
+                "is_active": name == commands_loader.active_profile_name
+            })
+    return profiles
+
+
+@app.post("/api/xplane/profiles/{profile_name}/activate")
+async def xplane_activate_profile(profile_name: str):
+    """Set the active aircraft profile."""
+    if commands_loader.set_active_profile(profile_name):
+        return {
+            "status": "ok",
+            "active_profile": profile_name
+        }
+    else:
+        raise HTTPException(status_code=404, detail=f"Profile '{profile_name}' not found")
+
+
+@app.get("/api/xplane/tokens")
+async def xplane_tokens(limit: int = 100, offset: int = 0):
+    """List tokens with their patterns."""
+    tokens = list(commands_loader.tokens.values())
+    total = len(tokens)
+    tokens = tokens[offset:offset + limit]
+
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "tokens": [
+            {
+                "name": t.name,
+                "phrase": t.phrase,
+                "pattern": t.pattern
+            }
+            for t in tokens
+        ]
+    }
+
+
+@app.get("/api/xplane/tokens/{token_name}")
+async def xplane_get_token(token_name: str):
+    """Get a specific token by name."""
+    token = commands_loader.get_token(token_name)
+    if not token:
+        raise HTTPException(status_code=404, detail=f"Token '{token_name}' not found")
+
+    # Also find commands that use this token
+    related_commands = commands_loader.find_commands_by_token(token_name)
+
+    return {
+        "name": token.name,
+        "phrase": token.phrase,
+        "pattern": token.pattern,
+        "used_in_commands": [cmd.tokens for cmd in related_commands[:20]]
+    }
+
+
+@app.get("/api/xplane/commands")
+async def xplane_commands(limit: int = 100, offset: int = 0, q: str = ""):
+    """List commands with optional search."""
+    if q:
+        cmds = commands_loader.search_commands(q)
+    else:
+        cmds = list(commands_loader.commands.values())
+
+    total = len(cmds)
+    cmds = cmds[offset:offset + limit]
+
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "query": q,
+        "commands": [
+            {
+                "tokens": cmd.tokens,
+                "profile": cmd.profile,
+                "script_preview": cmd.script[:200] + "..." if len(cmd.script) > 200 else cmd.script
+            }
+            for cmd in cmds
+        ]
+    }
+
+
+@app.get("/api/xplane/commands/{token_string:path}")
+async def xplane_get_command(token_string: str):
+    """Get a specific command by its token string (e.g., 'BEACON ON')."""
+    # URL-decode and normalize
+    token_string = token_string.replace("/", " ").strip().upper()
+
+    cmd = commands_loader.get_command(token_string)
+    if not cmd:
+        raise HTTPException(status_code=404, detail=f"Command '{token_string}' not found")
+
+    return {
+        "tokens": cmd.tokens,
+        "token_list": cmd.token_list,
+        "profile": cmd.profile,
+        "script": cmd.script
+    }
+
+
+@app.post("/api/xplane/match")
+async def xplane_match_input(text: str = Form(...)):
+    """
+    Match natural language input to tokens and find the best command.
+
+    This is the main entry point for voice/text command processing.
+    """
+    # Check for file changes
+    commands_loader.check_for_changes()
+
+    # Find best command (includes token matching)
+    best_cmd, matched_tokens, operands = commands_loader.find_command_for_input(text)
+
+    result = {
+        "input": text,
+        "matched_tokens": matched_tokens,
+        "operands": operands,
+        "command_found": best_cmd is not None
+    }
+
+    if best_cmd:
+        result["command"] = {
+            "tokens": best_cmd.tokens,
+            "profile": best_cmd.profile,
+            "script": best_cmd.script
+        }
+
+    return result
+
+
+@app.get("/api/xplane/export")
+async def xplane_export():
+    """Export all commands data as JSON."""
+    return commands_loader.to_dict()
+
+
+@app.get("/api/xplane/categories")
+async def xplane_categories():
+    """Get commands organized by category."""
+    categories = categorize_commands(commands_loader)
+
+    # Convert to JSON-serializable format
+    result = {}
+    for cat_name, cat_commands in categories.items():
+        result[cat_name] = [
+            {
+                "command": {
+                    "tokens": cmd.command.tokens,
+                    "profile": cmd.command.profile,
+                    "script_preview": cmd.command.script[:200] if cmd.command.script else ""
+                },
+                "category": cmd.category,
+                "requires_value": cmd.requires_value,
+                "value_type": cmd.value_type
+            }
+            for cmd in cat_commands
+        ]
+
+    return result
+
+
+@app.post("/api/commands/reload")
+async def reload_commands():
+    """Reload commands.xml from disk."""
+    success = commands_loader.reload()
+    if success:
+        return {
+            "status": "reloaded",
+            "total_commands": len(commands_loader.commands),
+            "profiles": commands_loader.profile_names
+        }
+    else:
+        raise HTTPException(status_code=500, detail="Failed to reload commands.xml")
+
+
+@app.get("/api/commands")
+async def copilot_commands():
+    """
+    Get all commands organized by profile and category for the Copilot page.
+    Returns commands grouped by profile, then by category, with test values.
+    """
+    # Sample test values for different value types
+    TEST_VALUES = {
+        "number": "100",
+        "degrees": "180",
+        "frequency": "121.5",
+        "identifier": "KLAX",
+        "flight_level": "350",
+        "altimeter": "29.92",
+    }
+
+    # Value placeholder tokens - these get replaced with test values
+    VALUE_TOKENS = {"NUMBER", "DEGREES", "FREQUENCY", "NAV_FREQUENCY", "COM_FREQUENCY",
+                    "ADF_FREQUENCY", "IDENTIFIER", "FLIGHT_LEVEL", "ALTIMETER_SETTING"}
+
+    categories = categorize_commands(commands_loader)
+    profiles = {}
+
+    for cat_name, cat_commands in categories.items():
+        for cat_cmd in cat_commands:
+            cmd = cat_cmd.command
+            profile_name = cmd.profile
+
+            if profile_name not in profiles:
+                profiles[profile_name] = {}
+
+            if cat_name not in profiles[profile_name]:
+                profiles[profile_name][cat_name] = []
+
+            # Generate test phrase by looking up each token's phrase
+            test_phrases = []
+            token_names = cmd.tokens.split()
+            for token_name in token_names:
+                if token_name in VALUE_TOKENS:
+                    # Skip value placeholders - they'll be added separately
+                    continue
+                token = commands_loader.get_token(token_name)
+                if token and token.phrase:
+                    test_phrases.append(token.phrase.lower())
+                else:
+                    # Fallback: convert underscore to space
+                    test_phrases.append(token_name.replace('_', ' ').lower())
+
+            test_phrase = ' '.join(test_phrases)
+
+            test_value = ""
+            if cat_cmd.requires_value and cat_cmd.value_type:
+                test_value = TEST_VALUES.get(cat_cmd.value_type, "100")
+
+            profiles[profile_name][cat_name].append({
+                "tokens": cmd.tokens,
+                "test_phrase": test_phrase,
+                "profile": profile_name,
+                "category": cat_name,
+                "requires_value": cat_cmd.requires_value,
+                "value_type": cat_cmd.value_type,
+                "test_value": test_value,
+                "script_preview": cmd.script[:100] if cmd.script else ""
+            })
+
+    # Sort categories within each profile
+    for profile_name in profiles:
+        profiles[profile_name] = dict(sorted(profiles[profile_name].items()))
+
+    # Always return all available profiles from the loader (not just from commands found)
+    all_profiles = commands_loader.profile_names
+
+    return {
+        "profiles": all_profiles,
+        "active_profile": commands_loader.active_profile_name,
+        "commands_by_profile": profiles,
+        "total_commands": len(commands_loader.commands)
+    }
+
+
+# =============================================================================
+# ExtPlane Connection & Execution API
+# =============================================================================
+
+@app.get("/api/extplane/status")
+async def extplane_status():
+    """Get ExtPlane connection status."""
+    client = get_client()
+    return {
+        "connected": client.is_connected,
+        "host": client.host,
+        "port": client.port
+    }
+
+
+@app.post("/api/extplane/connect")
+async def extplane_connect():
+    """Connect to ExtPlane."""
+    client = get_client()
+    if client.is_connected:
+        return {"status": "already_connected"}
+
+    success = client.connect()
+    if success:
+        return {"status": "connected"}
+    else:
+        raise HTTPException(status_code=503, detail="Failed to connect to ExtPlane")
+
+
+@app.post("/api/extplane/disconnect")
+async def extplane_disconnect():
+    """Disconnect from ExtPlane."""
+    client = get_client()
+    client.disconnect()
+    return {"status": "disconnected"}
+
+
+@app.post("/api/extplane/command")
+async def extplane_send_command(command: str = Form(...)):
+    """Send a raw command to X-Plane."""
+    client = get_client()
+    if not client.is_connected:
+        raise HTTPException(status_code=503, detail="Not connected to ExtPlane")
+
+    success = client.send_command(command)
+    return {"status": "sent" if success else "failed", "command": command}
+
+
+@app.post("/api/extplane/dataref/set")
+async def extplane_set_dataref(dataref: str = Form(...), value: str = Form(...)):
+    """Set a dataref value."""
+    client = get_client()
+    if not client.is_connected:
+        raise HTTPException(status_code=503, detail="Not connected to ExtPlane")
+
+    # Parse value
+    try:
+        if '.' in value:
+            parsed_value = float(value)
+        else:
+            parsed_value = int(value)
+    except:
+        parsed_value = value
+
+    success = client.set_dataref(dataref, parsed_value)
+    return {"status": "sent" if success else "failed", "dataref": dataref, "value": parsed_value}
+
+
+@app.get("/api/extplane/dataref/get")
+async def extplane_get_dataref(dataref: str):
+    """Get a dataref value (subscribes temporarily if needed)."""
+    client = get_client()
+    if not client.is_connected:
+        raise HTTPException(status_code=503, detail="Not connected to ExtPlane")
+
+    value = client.get_dataref(dataref, timeout=2.0)
+    return {"dataref": dataref, "value": value}
+
+
+@app.post("/api/extplane/dataref/subscribe")
+async def extplane_subscribe(dataref: str = Form(...)):
+    """Subscribe to a dataref for continuous updates."""
+    client = get_client()
+    if not client.is_connected:
+        raise HTTPException(status_code=503, detail="Not connected to ExtPlane")
+
+    success = client.subscribe(dataref)
+    return {"status": "subscribed" if success else "failed", "dataref": dataref}
+
+
+@app.post("/api/extplane/dataref/unsubscribe")
+async def extplane_unsubscribe(dataref: str = Form(...)):
+    """Unsubscribe from a dataref."""
+    client = get_client()
+    if not client.is_connected:
+        raise HTTPException(status_code=503, detail="Not connected to ExtPlane")
+
+    success = client.unsubscribe(dataref)
+    return {"status": "unsubscribed" if success else "failed", "dataref": dataref}
+
+
+@app.post("/api/extplane/execute")
+async def extplane_execute_command(text: str = Form(...)):
+    """
+    Execute a natural language command by running the script from commands.xml.
+
+    This:
+    1. Matches input text to a command's tokens
+    2. Gets the script code from commands.xml
+    3. Executes the full script using ScriptExecutor (variables, conditionals, loops, etc.)
+    4. Verifies execution by monitoring dataref changes
+    """
+    import re
+    import time
+
+    client = get_client()
+
+    # Check connection
+    if not client.is_connected:
+        if not client.connect():
+            return {
+                "status": "error",
+                "detail": "Not connected to ExtPlane. Is X-Plane running with ExtPlane plugin?",
+                "input": text,
+                "matched_tokens": [],
+                "connected": False
+            }
+
+    # Find the command
+    best_cmd, matched_tokens, operands = commands_loader.find_command_for_input(text)
+
+    if not best_cmd:
+        return {
+            "status": "no_match",
+            "input": text,
+            "matched_tokens": matched_tokens,
+            "connected": client.is_connected
+        }
+
+    script = best_cmd.script
+
+    # Extract datarefs from script for verification (before execution)
+    datarefs_to_watch = []
+
+    # Extract datarefs from setDataRefValue calls
+    dataref_pattern = r'setDataRefValue\s*\(\s*["\']([^"\']+)["\']'
+    for match in re.finditer(dataref_pattern, script):
+        datarefs_to_watch.append(match.group(1))
+
+    # Extract datarefs from setDataRefArrayValue calls
+    array_pattern = r'setDataRefArrayValue\s*\(\s*["\']([^"\']+)["\']'
+    for match in re.finditer(array_pattern, script):
+        datarefs_to_watch.append(match.group(1))
+
+    # Extract datarefs from getDataRefValue calls (these are read, so also watch them)
+    get_pattern = r'getDataRefValue\s*\(\s*["\']([^"\']+)["\']'
+    for match in re.finditer(get_pattern, script):
+        datarefs_to_watch.append(match.group(1))
+
+    # Remove duplicates
+    datarefs_to_watch = list(set(datarefs_to_watch))
+
+    # Subscribe to datarefs and get initial values
+    initial_values = {}
+    for dr in datarefs_to_watch[:10]:
+        try:
+            client.subscribe(dr)
+        except Exception as e:
+            print(f"Subscribe error for {dr}: {e}")
+
+    # Brief wait for subscriptions to populate
+    time.sleep(0.2)
+
+    for dr in datarefs_to_watch[:10]:
+        val = client.get_subscribed_value(dr)
+        initial_values[dr] = val.value if val else None
+
+    # Execute the script using ScriptExecutor
+    executor = ScriptExecutor(client)
+    result = executor.execute(script, operands)
+
+    # Wait for changes to propagate
+    time.sleep(0.3)
+
+    # Check final values
+    final_values = {}
+    changes = []
+    for dr in datarefs_to_watch[:10]:
+        try:
+            val = client.get_subscribed_value(dr)
+            final_values[dr] = val.value if val else None
+
+            if initial_values.get(dr) != final_values.get(dr):
+                changes.append({
+                    "dataref": dr,
+                    "before": initial_values.get(dr),
+                    "after": final_values.get(dr)
+                })
+        except Exception as e:
+            print(f"Error getting final value for {dr}: {e}")
+            final_values[dr] = None
+
+    # Also add any datarefs that were set by the executor to the changes list
+    for dr_set in result.get("datarefs_set", []):
+        dr = dr_set.get("dataref", "")
+        if dr and dr not in [c["dataref"] for c in changes]:
+            # Subscribe and check value
+            try:
+                client.subscribe(dr)
+                time.sleep(0.1)
+                val = client.get_subscribed_value(dr)
+                if val:
+                    changes.append({
+                        "dataref": dr,
+                        "before": None,
+                        "after": val.value
+                    })
+            except:
+                pass
+
+    # Unsubscribe from all
+    for dr in datarefs_to_watch[:10]:
+        try:
+            client.unsubscribe(dr)
+        except:
+            pass
+
+    # Determine status
+    has_errors = len(result.get("errors", [])) > 0
+    did_something = len(result.get("commands_sent", [])) > 0 or len(result.get("datarefs_set", [])) > 0
+    has_changes = len(changes) > 0
+
+    if has_errors and not did_something:
+        status = "failed"
+    elif has_changes:
+        status = "verified"
+    elif did_something:
+        status = "sent"
+    else:
+        status = "failed"
+
+    return {
+        "status": status,
+        "input": text,
+        "matched_tokens": matched_tokens,
+        "operands": operands,
+        "command": {
+            "tokens": best_cmd.tokens,
+            "profile": best_cmd.profile
+        },
+        "commands_sent": result.get("commands_sent", []),
+        "datarefs_set": result.get("datarefs_set", []),
+        "datarefs_watched": datarefs_to_watch[:10],
+        "dataref_changes": changes,
+        "initial_values": initial_values,
+        "final_values": final_values,
+        "errors": result.get("errors", []),
+        "verified": status == "verified",
+        "connected": client.is_connected
+    }
+
+
+# =============================================================================
+# AI Copilot - Claude-powered natural language command interpretation
+# =============================================================================
+
+# Initialize Anthropic client (lazy loading)
+_anthropic_client = None
+
+def get_anthropic_client():
+    """Get or create Anthropic client."""
+    global _anthropic_client
+    if _anthropic_client is None:
+        try:
+            import anthropic
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+            if not api_key:
+                return None
+            _anthropic_client = anthropic.Anthropic(api_key=api_key)
+        except ImportError:
+            return None
+    return _anthropic_client
+
+
+@app.get("/api/ai/status")
+async def ai_status():
+    """Check if AI Copilot is available."""
+    client = get_anthropic_client()
+    return {
+        "available": client is not None,
+        "reason": "API key not configured" if client is None else None
+    }
+
+
+@app.post("/api/ai/interpret")
+async def ai_interpret_command(text: str = Form(...)):
+    """
+    Use Claude to interpret natural language and find the best matching command.
+
+    Takes natural speech like "turn on the landing lights" and returns
+    the best matching command phrase like "landing lights on".
+    """
+    client = get_anthropic_client()
+    if not client:
+        raise HTTPException(
+            status_code=503,
+            detail="AI Copilot not available. Set ANTHROPIC_API_KEY in .env file."
+        )
+
+    # Build list of available commands with their phrases
+    categories = categorize_commands(commands_loader)
+    command_list = []
+
+    for cat_name, cat_commands in categories.items():
+        for cat_cmd in cat_commands:
+            cmd = cat_cmd.command
+            # Get the spoken phrase for this command
+            tokens = cmd.tokens.split()
+            phrases = []
+            for token_name in tokens:
+                # Skip value placeholders
+                if token_name in {'NUMBER', 'DEGREES', 'FREQUENCY', 'NAV_FREQUENCY',
+                                  'COM_FREQUENCY', 'ADF_FREQUENCY', 'IDENTIFIER',
+                                  'FLIGHT_LEVEL', 'ALTIMETER_SETTING'}:
+                    phrases.append(f"[{token_name}]")
+                    continue
+                token = commands_loader.get_token(token_name)
+                if token and token.phrase:
+                    phrases.append(token.phrase.lower())
+                else:
+                    phrases.append(token_name.replace('_', ' ').lower())
+
+            phrase = ' '.join(phrases)
+            command_list.append({
+                "tokens": cmd.tokens,
+                "phrase": phrase,
+                "category": cat_name,
+                "requires_value": cat_cmd.requires_value,
+                "value_type": cat_cmd.value_type
+            })
+
+    # Build the prompt for Claude
+    commands_text = "\n".join([
+        f"- {c['phrase']}" + (f" (requires {c['value_type']})" if c['requires_value'] else "")
+        for c in command_list
+    ])
+
+    system_prompt = """You are an aircraft copilot assistant. Your job is to interpret pilot commands and map them to the available aircraft control commands.
+
+Given a pilot's spoken instruction, determine the best matching command from the available commands list.
+
+Rules:
+1. Return ONLY the exact command phrase(s) that should be executed, nothing else
+2. If the command requires a value (like a number), include it in your response
+3. If the pilot's intent is unclear or doesn't match any command, respond with "NO_MATCH"
+4. Be flexible with phrasing - "turn on beacon" matches "beacon on", "activate landing lights" matches "landing lights on"
+5. For numerical values, extract the number from the speech (e.g., "set flaps to 5" -> "flaps 5")
+6. You can return multiple commands separated by semicolons if the pilot clearly wants multiple actions
+7. IGNORE timing instructions like "wait", "pause", "after X seconds" - these cannot be executed. Only return the actual aircraft commands.
+8. For "turn off all lights" or similar, return each individual light command separated by semicolons
+
+Available commands:
+""" + commands_text
+
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=150,
+            system=[
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ],
+            messages=[
+                {"role": "user", "content": f"Pilot says: \"{text}\""}
+            ]
+        )
+
+        interpreted = message.content[0].text.strip()
+
+        if interpreted == "NO_MATCH":
+            return {
+                "success": False,
+                "input": text,
+                "interpreted": None,
+                "reason": "Could not match to any available command"
+            }
+
+        # Handle multiple commands (separated by semicolons)
+        commands = [cmd.strip() for cmd in interpreted.split(';') if cmd.strip()]
+
+        return {
+            "success": True,
+            "input": text,
+            "interpreted": commands[0] if len(commands) == 1 else commands,
+            "multiple": len(commands) > 1
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI interpretation failed: {str(e)}")
+
+
+@app.post("/api/ai/execute")
+async def ai_execute_command(text: str = Form(...)):
+    """
+    Interpret natural language with Claude and execute the matched command.
+
+    Combines AI interpretation with command execution in one call.
+    """
+    # First interpret with AI
+    client = get_anthropic_client()
+    if not client:
+        raise HTTPException(
+            status_code=503,
+            detail="AI Copilot not available. Set ANTHROPIC_API_KEY in .env file."
+        )
+
+    # Get interpretation
+    import json as json_module
+    interpret_result = await ai_interpret_command(text)
+
+    if not interpret_result["success"]:
+        return {
+            "status": "no_match",
+            "input": text,
+            "interpreted": None,
+            "reason": interpret_result.get("reason", "No matching command found")
+        }
+
+    # Execute the interpreted command(s)
+    interpreted = interpret_result["interpreted"]
+
+    # Handle single or multiple commands
+    if isinstance(interpreted, list):
+        # Multiple commands - execute each and track results
+        results = []
+        succeeded = []
+        failed = []
+
+        for cmd in interpreted:
+            # Execute each command
+            result = await extplane_execute_command(cmd)
+            result["command"] = cmd
+            results.append(result)
+
+            if result.get("status") in ["verified", "sent"]:
+                succeeded.append(cmd)
+            else:
+                failed.append(cmd)
+
+        # Aggregate status
+        all_verified = all(r.get("status") == "verified" for r in results)
+        any_success = len(succeeded) > 0
+
+        if all_verified:
+            status = "verified"
+        elif any_success:
+            status = "partial" if failed else "sent"
+        else:
+            status = "failed"
+
+        return {
+            "status": status,
+            "input": text,
+            "interpreted": interpreted,
+            "succeeded": succeeded,
+            "failed": failed,
+            "results": results,
+            "ai_assisted": True
+        }
+    else:
+        # Single command
+        result = await extplane_execute_command(interpreted)
+        result["input"] = text
+        result["interpreted"] = interpreted
+        result["ai_assisted"] = True
+        return result
+
+
+# =============================================================================
+# Checklist Copilot API Endpoints
+# =============================================================================
+
+# Global checklist runner instance
+_checklist_runner: Optional[ChecklistRunner] = None
+
+
+def get_checklist_runner() -> ChecklistRunner:
+    """Get or create the global ChecklistRunner."""
+    global _checklist_runner
+    if _checklist_runner is None:
+        _checklist_runner = ChecklistRunner(get_client(), commands_loader=commands_loader)
+    return _checklist_runner
+
+
+@app.get("/checklist", response_class=HTMLResponse)
+async def checklist_page():
+    """Serve the Checklist Copilot UI."""
+    with open("templates/checklist.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+
+@app.post("/api/checklist/load")
+async def checklist_load(path: str = Form("")):
+    """Load Clist.txt from the given path or auto-detect from aircraft directory."""
+    runner = get_checklist_runner()
+
+    # Ensure ExtPlane is connected
+    client = get_client()
+    if not client.is_connected:
+        client.connect()
+    runner.client = client
+
+    if not path:
+        # Try to auto-detect from config
+        aircraft_path = xplane_config.zibo_737_path
+        if aircraft_path:
+            for name in ["Clist.txt", "clist.txt"]:
+                candidate = Path(aircraft_path) / name
+                if candidate.exists():
+                    path = str(candidate)
+                    break
+
+    if not path:
+        raise HTTPException(status_code=400, detail="No path provided and could not auto-detect Clist.txt")
+
+    try:
+        names = runner.load(path)
+        return {"status": "ok", "checklists": names, "path": path}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/checklist/list")
+async def checklist_list():
+    """List available checklists."""
+    runner = get_checklist_runner()
+    return {"checklists": runner.list_checklists()}
+
+
+@app.post("/api/checklist/start")
+async def checklist_start(name: str = Form(...), auto_run: bool = Form(False)):
+    """Start a checklist by name. Set auto_run=true to begin executing immediately."""
+    runner = get_checklist_runner()
+    if runner.start(name, auto_run=auto_run):
+        return {"status": "ok", "checklist": name, "auto_run": auto_run}
+    else:
+        raise HTTPException(status_code=404, detail=f"Checklist '{name}' not found")
+
+
+@app.post("/api/checklist/run")
+async def checklist_run(mode: str = Form("single")):
+    """
+    Run checklist items.
+
+    mode=single: run current item (blocking, returns when done)
+    mode=all: start auto-running in background thread (non-blocking)
+    """
+    runner = get_checklist_runner()
+    if mode == "all":
+        runner.run_all()
+        return {"status": "ok", "message": "Auto-run started in background",
+                "state": runner.get_status()}
+    else:
+        result = runner.run_single()
+        return {"status": "ok", "result": result, "state": runner.get_status()}
+
+
+@app.post("/api/checklist/pause")
+async def checklist_pause():
+    """Pause checklist automation."""
+    runner = get_checklist_runner()
+    runner.pause()
+    return {"status": "ok", "state": runner.get_status()}
+
+
+@app.post("/api/checklist/resume")
+async def checklist_resume():
+    """Resume checklist automation."""
+    runner = get_checklist_runner()
+    runner.resume()
+    return {"status": "ok", "state": runner.get_status()}
+
+
+@app.post("/api/checklist/confirm")
+async def checklist_confirm():
+    """Confirm a manual checklist item."""
+    runner = get_checklist_runner()
+    runner.confirm()
+    return {"status": "ok", "state": runner.get_status()}
+
+
+@app.post("/api/checklist/skip")
+async def checklist_skip():
+    """Skip the current checklist item."""
+    runner = get_checklist_runner()
+    runner.skip_item()
+    return {"status": "ok", "state": runner.get_status()}
+
+
+@app.post("/api/checklist/restart")
+async def checklist_restart():
+    """Restart the checklist from START, resetting all history."""
+    runner = get_checklist_runner()
+    runner.restart()
+    return {"status": "ok", "state": runner.get_status()}
+
+
+@app.get("/api/checklist/status")
+async def checklist_status():
+    """Get current checklist state."""
+    runner = get_checklist_runner()
+    return runner.get_status()
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

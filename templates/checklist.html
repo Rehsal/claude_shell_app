@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checklist Copilot</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #fff;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Top bar */
+        .top-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 20px;
+            background: #0f3460;
+            border-bottom: 1px solid #374151;
+            flex-shrink: 0;
+        }
+
+        .top-bar h1 {
+            font-size: 1.1rem;
+            color: #e94560;
+            margin-right: 8px;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.8rem;
+        }
+
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #f87171;
+        }
+        .status-dot.connected { background: #4ade80; }
+
+        .conn-text { color: #94a3b8; }
+        .conn-text.connected { color: #4ade80; }
+
+        .spacer { flex: 1; }
+
+        .runner-badge {
+            font-size: 0.8rem;
+            font-weight: 600;
+            padding: 3px 10px;
+            border-radius: 4px;
+        }
+        .runner-badge.idle { color: #94a3b8; background: #374151; }
+        .runner-badge.running { color: #4ade80; background: rgba(74,222,128,0.15); }
+        .runner-badge.paused { color: #fbbf24; background: rgba(251,191,36,0.15); }
+        .runner-badge.waiting_confirm { color: #f59e0b; background: rgba(245,158,11,0.15); }
+        .runner-badge.completed { color: #4ade80; background: rgba(74,222,128,0.2); }
+
+        .btn {
+            padding: 6px 14px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: white;
+        }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-primary { background: #e94560; }
+        .btn-primary:hover:not(:disabled) { background: #ff6b6b; }
+        .btn-secondary { background: #374151; }
+        .btn-secondary:hover:not(:disabled) { background: #4b5563; }
+        .btn-success { background: #10b981; }
+        .btn-success:hover:not(:disabled) { background: #34d399; }
+        .btn-warning { background: #f59e0b; color: #000; }
+        .btn-warning:hover:not(:disabled) { background: #fbbf24; }
+
+        /* Load bar (shown when no checklist loaded) */
+        .load-bar {
+            display: flex;
+            gap: 8px;
+            padding: 10px 20px;
+            background: #16213e;
+            border-bottom: 1px solid #374151;
+            flex-shrink: 0;
+        }
+
+        .load-bar input {
+            flex: 1;
+            padding: 6px 10px;
+            background: #1a1a2e;
+            border: 1px solid #374151;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 0.8rem;
+        }
+        .load-bar input:focus { outline: none; border-color: #e94560; }
+
+        /* Progress bar */
+        .progress-strip {
+            height: 4px;
+            background: #374151;
+            flex-shrink: 0;
+        }
+        .progress-strip .fill {
+            height: 100%;
+            background: #e94560;
+            transition: width 0.3s;
+            width: 0%;
+        }
+
+        /* Scrolling checklist items */
+        .items-scroll {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px 20px;
+        }
+
+        .section-header {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #e94560;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 12px 0 4px;
+            border-bottom: 1px solid #374151;
+            margin-bottom: 4px;
+        }
+        .section-header:first-child { padding-top: 0; }
+
+        .item-row {
+            display: flex;
+            align-items: center;
+            padding: 6px 10px;
+            margin: 2px 0;
+            border-radius: 5px;
+            gap: 10px;
+            font-size: 0.85rem;
+        }
+
+        .item-row.current {
+            background: #0f3460;
+            border-left: 3px solid #e94560;
+        }
+        .item-row.waiting {
+            background: #3a2a0e;
+            border-left: 3px solid #f59e0b;
+        }
+        .item-row.void {
+            color: #64748b;
+        }
+        .item-row.done {
+            color: #94a3b8;
+        }
+
+        .item-icon {
+            width: 20px; height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            font-size: 0.65rem;
+            font-weight: 700;
+        }
+        .icon-check { background: #10b981; color: #fff; }
+        .icon-void { background: #374151; color: #64748b; }
+        .icon-skip { background: #64748b; color: #fff; }
+        .icon-current { background: #e94560; color: #fff; }
+        .icon-waiting { background: #f59e0b; color: #000; }
+        .icon-pending { background: #374151; color: #94a3b8; }
+        .icon-error { background: #f87171; color: #fff; }
+        .icon-confirm { background: #4ade80; color: #000; }
+        .icon-remark { background: transparent; color: #94a3b8; }
+
+        .item-label { flex: 1; }
+        .item-label .checked { color: #4ade80; margin-left: 6px; }
+        .item-label .checked.dim { color: #64748b; }
+
+        /* Bottom bar */
+        .bottom-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 20px;
+            background: #16213e;
+            border-top: 1px solid #374151;
+            flex-shrink: 0;
+        }
+
+        .bottom-bar .confirm-msg {
+            flex: 1;
+            font-size: 0.85rem;
+            color: #fbbf24;
+        }
+
+        .progress-text {
+            font-size: 0.75rem;
+            color: #64748b;
+        }
+
+        /* Log toggle */
+        .log-toggle {
+            font-size: 0.75rem;
+            color: #64748b;
+            cursor: pointer;
+            user-select: none;
+        }
+        .log-toggle:hover { color: #94a3b8; }
+
+        .log-panel {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.2s;
+            background: #111827;
+            font-family: monospace;
+            font-size: 0.7rem;
+            color: #64748b;
+        }
+        .log-panel.open {
+            max-height: 200px;
+            overflow-y: auto;
+            border-top: 1px solid #374151;
+            padding: 8px 20px;
+        }
+        .log-panel .entry { padding: 1px 0; }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #64748b;
+        }
+        .empty-state h3 { color: #94a3b8; margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <!-- Top bar -->
+    <div class="top-bar">
+        <h1>Checklist Copilot</h1>
+        <div class="connection-status">
+            <div class="status-dot" id="statusDot"></div>
+            <span class="conn-text" id="connText">Checking...</span>
+        </div>
+        <div class="spacer"></div>
+        <span class="runner-badge idle" id="runnerBadge">IDLE</span>
+        <button class="btn btn-primary" id="btnRestart" onclick="restartChecklist()" disabled>Restart</button>
+    </div>
+
+    <!-- Load bar -->
+    <div class="load-bar" id="loadBar">
+        <input type="text" id="clistPath" placeholder="Path to Clist.txt (leave blank to auto-detect)">
+        <button class="btn btn-primary" onclick="loadChecklist()">Load</button>
+        <button class="btn btn-success" id="btnStart" onclick="startChecklist()" disabled>Start</button>
+    </div>
+
+    <!-- Progress -->
+    <div class="progress-strip"><div class="fill" id="progressFill"></div></div>
+
+    <!-- Scrolling item list -->
+    <div class="items-scroll" id="itemsScroll">
+        <div class="empty-state">
+            <h3>No Checklist Loaded</h3>
+            <p>Click Load to parse Clist.txt, then Start to begin the START checklist</p>
+        </div>
+    </div>
+
+    <!-- Bottom bar -->
+    <div class="bottom-bar">
+        <span class="confirm-msg" id="confirmMsg" style="display:none;"></span>
+        <button class="btn btn-success" id="btnConfirm" onclick="confirmItem()" style="display:none;">Confirm</button>
+        <button class="btn btn-secondary" id="btnSkip" onclick="skipItem()" disabled>Skip</button>
+        <button class="btn btn-warning" id="btnPause" onclick="togglePause()" disabled>Pause</button>
+        <div class="spacer"></div>
+        <span class="progress-text" id="progressText"></span>
+        <span class="log-toggle" onclick="toggleLog()">Log</span>
+    </div>
+
+    <!-- Log panel -->
+    <div class="log-panel" id="logPanel"></div>
+
+    <script>
+        let connected = false;
+        let loaded = false;
+        let lastHistoryLen = 0;
+        let pollTimer = null;
+        let paused = false;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            await checkConnection();
+            setInterval(checkConnection, 10000);
+        });
+
+        // ---- Connection ----
+        async function checkConnection() {
+            try {
+                const r = await fetch('/api/extplane/status');
+                const d = await r.json();
+                const was = connected;
+                connected = d.connected;
+                updateConn();
+                if (!connected && !was) {
+                    await fetch('/api/extplane/connect', { method: 'POST' });
+                    setTimeout(checkConnection, 1000);
+                }
+            } catch {
+                connected = false;
+                updateConn();
+            }
+        }
+
+        function updateConn() {
+            document.getElementById('statusDot').className = 'status-dot' + (connected ? ' connected' : '');
+            const t = document.getElementById('connText');
+            t.className = 'conn-text' + (connected ? ' connected' : '');
+            t.textContent = connected ? 'Connected' : 'Disconnected';
+        }
+
+        // ---- Load ----
+        async function loadChecklist() {
+            const path = document.getElementById('clistPath').value;
+            const fd = new FormData();
+            fd.append('path', path);
+            try {
+                const r = await fetch('/api/checklist/load', { method: 'POST', body: fd });
+                if (!r.ok) { const e = await r.json(); alert(e.detail || 'Failed'); return; }
+                const d = await r.json();
+                loaded = true;
+                document.getElementById('btnStart').disabled = false;
+                document.getElementById('itemsScroll').innerHTML =
+                    `<div class="empty-state"><h3>Loaded ${d.checklists.length} checklists</h3><p>Click Start to run the START sequence</p></div>`;
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        // ---- Start / Restart ----
+        async function startChecklist() {
+            // Find the START checklist
+            const listR = await fetch('/api/checklist/list');
+            const listD = await listR.json();
+            const startCl = listD.checklists.find(c => c.name.toUpperCase().includes('START'));
+            if (!startCl && listD.checklists.length === 0) { alert('No checklists loaded'); return; }
+            const name = startCl ? startCl.name : listD.checklists[0].name;
+
+            const fd = new FormData();
+            fd.append('name', name);
+            fd.append('auto_run', 'true');
+            await fetch('/api/checklist/start', { method: 'POST', body: fd });
+
+            lastHistoryLen = 0;
+            document.getElementById('itemsScroll').innerHTML = '';
+            document.getElementById('btnRestart').disabled = false;
+            startPolling();
+        }
+
+        async function restartChecklist() {
+            lastHistoryLen = 0;
+            document.getElementById('itemsScroll').innerHTML = '';
+            await fetch('/api/checklist/restart', { method: 'POST' });
+            startPolling();
+        }
+
+        // ---- Polling ----
+        function startPolling() {
+            if (pollTimer) return;
+            pollTimer = setInterval(poll, 1500);
+            poll();
+        }
+
+        async function poll() {
+            try {
+                const r = await fetch('/api/checklist/status');
+                const s = await r.json();
+                renderStatus(s);
+            } catch {}
+        }
+
+        // ---- Render ----
+        function renderStatus(s) {
+            // Badge
+            const badge = document.getElementById('runnerBadge');
+            badge.textContent = s.state.toUpperCase().replace('_', ' ');
+            badge.className = 'runner-badge ' + s.state;
+
+            // Progress
+            document.getElementById('progressFill').style.width = s.progress + '%';
+            document.getElementById('progressText').textContent =
+                s.progress_total > 0 ? `${s.progress_total} items processed` : '';
+
+            // State-dependent buttons
+            const isRunning = s.state === 'running';
+            const isWaiting = s.state === 'waiting_confirm';
+            const isPaused = s.state === 'paused';
+            paused = isPaused;
+
+            document.getElementById('btnPause').disabled = !isRunning && !isWaiting && !isPaused;
+            document.getElementById('btnPause').textContent = isPaused ? 'Resume' : 'Pause';
+            document.getElementById('btnSkip').disabled = !isRunning && !isWaiting && !isPaused;
+
+            // Confirm UI
+            const confirmMsg = document.getElementById('confirmMsg');
+            const confirmBtn = document.getElementById('btnConfirm');
+            if (isWaiting && s.current_item) {
+                confirmMsg.style.display = '';
+                confirmMsg.textContent = `${s.current_item.label} — ${s.current_item.checked_text}`;
+                confirmBtn.style.display = '';
+            } else {
+                confirmMsg.style.display = 'none';
+                confirmBtn.style.display = 'none';
+            }
+
+            // Render history + current item
+            renderItems(s);
+
+            // Log
+            const lp = document.getElementById('logPanel');
+            if (s.log && s.log.length) {
+                lp.innerHTML = s.log.map(l => `<div class="entry">${escHtml(l)}</div>`).join('');
+                if (lp.classList.contains('open')) lp.scrollTop = lp.scrollHeight;
+            }
+
+            // Stop polling when completed
+            if (s.state === 'completed' || s.state === 'idle') {
+                // keep polling but at lower rate
+            }
+        }
+
+        function renderItems(s) {
+            const container = document.getElementById('itemsScroll');
+            const history = s.history || [];
+
+            // Incremental: only add new items
+            if (history.length > lastHistoryLen) {
+                for (let i = lastHistoryLen; i < history.length; i++) {
+                    const h = history[i];
+                    // Section header if changed
+                    if (i === 0 || history[i].section !== history[i-1].section) {
+                        const hdr = document.createElement('div');
+                        hdr.className = 'section-header';
+                        hdr.textContent = h.section || 'CHECKLIST';
+                        container.appendChild(hdr);
+                    }
+                    container.appendChild(makeHistoryRow(h));
+                }
+                lastHistoryLen = history.length;
+            }
+
+            // Remove old current-item marker
+            const oldCur = container.querySelector('.item-row.current, .item-row.waiting');
+            if (oldCur && oldCur.id === '__current') oldCur.remove();
+
+            // Add current item
+            if (s.current_item && s.state !== 'completed' && s.state !== 'idle') {
+                const row = document.createElement('div');
+                row.className = 'item-row ' + (s.state === 'waiting_confirm' ? 'waiting' : 'current');
+                row.id = '__current';
+                const isWait = s.state === 'waiting_confirm';
+                const iconCls = isWait ? 'icon-waiting' : 'icon-current';
+                const iconChar = isWait ? '?' : '&#9654;';
+                const ci = s.current_item;
+                row.innerHTML = `
+                    <div class="item-icon ${iconCls}">${iconChar}</div>
+                    <div class="item-label">
+                        ${escHtml(ci.label || ci.continue_target || '')}
+                        ${ci.checked_text ? `<span class="checked">${escHtml(ci.checked_text)}</span>` : ''}
+                    </div>`;
+                container.appendChild(row);
+                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+
+            // Completed marker
+            if (s.state === 'completed') {
+                if (!container.querySelector('.completed-marker')) {
+                    const done = document.createElement('div');
+                    done.className = 'item-row completed-marker';
+                    done.style.cssText = 'background:rgba(74,222,128,0.1);border-left:3px solid #4ade80;margin-top:8px;';
+                    done.innerHTML = `<div class="item-icon icon-check">&#10003;</div>
+                        <div class="item-label" style="color:#4ade80;font-weight:600;">Checklist Complete</div>`;
+                    container.appendChild(done);
+                    done.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
+        }
+
+        function makeHistoryRow(h) {
+            const row = document.createElement('div');
+            const isVoid = h.type === 'sw_itemvoid';
+            const isRemark = h.type === 'sw_remark';
+            const isContinue = h.type === 'sw_continue';
+            const isSkipped = h.status === 'skipped';
+            const isSatisfied = h.status === 'satisfied' || h.status === 'confirmed';
+
+            let cls = 'item-row';
+            if (isVoid || isRemark) cls += ' void';
+            else if (isSatisfied) cls += ' done';
+            else if (isSkipped) cls += ' done';
+
+            row.className = cls;
+
+            let iconCls, iconChar;
+            if (isSatisfied) { iconCls = 'icon-check'; iconChar = '&#10003;'; }
+            else if (h.status === 'confirmed') { iconCls = 'icon-confirm'; iconChar = '&#10003;'; }
+            else if (isVoid) { iconCls = 'icon-void'; iconChar = '&mdash;'; }
+            else if (isRemark) { iconCls = 'icon-remark'; iconChar = '&#8505;'; }
+            else if (isContinue) { iconCls = 'icon-pending'; iconChar = '&#187;'; }
+            else if (isSkipped) { iconCls = 'icon-skip'; iconChar = '&#8212;'; }
+            else if (h.status === 'error') { iconCls = 'icon-error'; iconChar = '!'; }
+            else { iconCls = 'icon-pending'; iconChar = '?'; }
+
+            const label = h.label || h.continue_target || '';
+            const checked = h.checked_text || '';
+            const dimChecked = isVoid || isRemark;
+
+            row.innerHTML = `
+                <div class="item-icon ${iconCls}">${iconChar}</div>
+                <div class="item-label">
+                    ${escHtml(label)}
+                    ${checked ? `<span class="checked${dimChecked ? ' dim' : ''}">${escHtml(checked)}</span>` : ''}
+                </div>`;
+            return row;
+        }
+
+        // ---- Actions ----
+        async function confirmItem() {
+            await fetch('/api/checklist/confirm', { method: 'POST' });
+        }
+
+        async function skipItem() {
+            await fetch('/api/checklist/skip', { method: 'POST' });
+        }
+
+        async function togglePause() {
+            if (paused) {
+                await fetch('/api/checklist/resume', { method: 'POST' });
+            } else {
+                await fetch('/api/checklist/pause', { method: 'POST' });
+            }
+        }
+
+        function toggleLog() {
+            document.getElementById('logPanel').classList.toggle('open');
+        }
+
+        function escHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+    </script>
+</body>
+</html>

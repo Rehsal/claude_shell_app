@@ -1,0 +1,341 @@
+/* Claude Shell App - Minimal CSS */
+
+:root {
+    --bg: #1a1a2e;
+    --bg-light: #16213e;
+    --accent: #e94560;
+    --text: #eee;
+    --text-muted: #aaa;
+    --border: #333;
+    --success: #4ecca3;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 20px;
+    line-height: 1.6;
+}
+
+h1, h2, h3 {
+    margin-top: 0;
+    font-weight: 500;
+}
+
+h1 {
+    color: var(--accent);
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 10px;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    gap: 20px;
+}
+
+/* Sidebar */
+.sidebar {
+    background: var(--bg-light);
+    padding: 20px;
+    border-radius: 8px;
+    height: fit-content;
+}
+
+.sidebar h2 {
+    font-size: 1.1rem;
+    margin-bottom: 15px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* Project List */
+.project-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 20px 0;
+}
+
+.project-list li {
+    padding: 10px 12px;
+    margin-bottom: 5px;
+    background: var(--bg);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.project-list li:hover {
+    background: #252545;
+}
+
+.project-list li.active {
+    background: var(--accent);
+    color: white;
+}
+
+.project-list li .desc {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.project-list li.active .desc {
+    color: rgba(255,255,255,0.8);
+}
+
+/* Forms */
+.form-group {
+    margin-bottom: 15px;
+}
+
+label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+input[type="text"],
+textarea {
+    width: 100%;
+    padding: 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 1rem;
+}
+
+input[type="text"]:focus,
+textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+textarea {
+    min-height: 100px;
+    resize: vertical;
+    font-family: inherit;
+}
+
+button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: opacity 0.2s;
+}
+
+button:hover {
+    opacity: 0.9;
+}
+
+button.secondary {
+    background: var(--border);
+}
+
+button.small {
+    padding: 5px 10px;
+    font-size: 0.8rem;
+}
+
+/* Main Content */
+.main {
+    background: var(--bg-light);
+    padding: 20px;
+    border-radius: 8px;
+}
+
+.main h2 {
+    color: var(--accent);
+    margin-bottom: 20px;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+}
+
+/* Tabs */
+.tabs {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+}
+
+.tab {
+    background: transparent;
+    color: var(--text-muted);
+    padding: 8px 16px;
+}
+
+.tab.active {
+    background: var(--accent);
+    color: white;
+}
+
+/* Sections */
+.section {
+    display: none;
+    animation: fadeIn 0.2s;
+}
+
+.section.active {
+    display: block;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Notes */
+#notes-editor {
+    min-height: 200px;
+}
+
+/* Pins */
+.pin-card {
+    background: var(--bg);
+    padding: 15px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+    position: relative;
+}
+
+.pin-card h4 {
+    margin: 0 0 10px 0;
+    color: var(--accent);
+}
+
+.pin-card pre {
+    margin: 0;
+    white-space: pre-wrap;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.pin-card .delete-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: transparent;
+    color: var(--text-muted);
+    padding: 5px;
+    font-size: 1.2rem;
+    line-height: 1;
+}
+
+.pin-card .delete-btn:hover {
+    color: var(--accent);
+}
+
+/* Uploads */
+.upload-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg);
+    padding: 12px 15px;
+    border-radius: 4px;
+    margin-bottom: 8px;
+}
+
+.upload-item .name {
+    font-weight: 500;
+}
+
+.upload-item .meta {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+/* Log */
+.log-entry {
+    padding: 8px 12px;
+    background: var(--bg);
+    margin-bottom: 5px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    display: flex;
+    gap: 10px;
+}
+
+.log-entry .time {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    min-width: 160px;
+}
+
+.log-entry .kind {
+    background: var(--accent);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+}
+
+/* File input */
+.file-input-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
+.file-input-wrapper input[type="file"] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+}
+
+/* Status messages */
+.status {
+    padding: 10px;
+    border-radius: 4px;
+    margin-bottom: 15px;
+    display: none;
+}
+
+.status.success {
+    display: block;
+    background: rgba(78, 204, 163, 0.2);
+    border: 1px solid var(--success);
+    color: var(--success);
+}
+
+.status.error {
+    display: block;
+    background: rgba(233, 69, 96, 0.2);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+}
+
+/* Responsive */
+@media (max-width: 800px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+}

@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+venv/
+.env
+data/
+*.log
+nul
+status_tmp.json
+*.json
+!requirements.txt
+!package.json
+.claude/

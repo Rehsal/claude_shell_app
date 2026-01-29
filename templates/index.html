@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Shell App</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Claude Shell App</h1>
+
+        <div class="grid">
+            <!-- Sidebar -->
+            <div class="sidebar">
+                <h2>Projects</h2>
+                <ul class="project-list" id="project-list">
+                    <!-- Projects loaded dynamically -->
+                </ul>
+
+                <h2>New Project</h2>
+                <form id="project-form">
+                    <div class="form-group">
+                        <label for="project-name">Name</label>
+                        <input type="text" id="project-name" name="name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="project-desc">Description</label>
+                        <input type="text" id="project-desc" name="description">
+                    </div>
+                    <button type="submit">Create Project</button>
+                </form>
+            </div>
+
+            <!-- Main Content -->
+            <div class="main" id="main-content">
+                <div id="empty-state" class="empty-state">
+                    <h2>Welcome to Claude Shell</h2>
+                    <p>Select or create a project to get started.</p>
+                </div>
+
+                <div id="project-view" style="display: none;">
+                    <h2 id="project-title">Project Name</h2>
+
+                    <div class="tabs">
+                        <button class="tab active" data-tab="notes">Notes</button>
+                        <button class="tab" data-tab="pins">Pinned Prompts</button>
+                        <button class="tab" data-tab="uploads">Uploads</button>
+                        <button class="tab" data-tab="log">Session Log</button>
+                    </div>
+
+                    <!-- Notes Section -->
+                    <div id="section-notes" class="section active">
+                        <form id="notes-form">
+                            <div class="form-group">
+                                <label for="notes-editor">Project Notes</label>
+                                <textarea id="notes-editor" name="notes" placeholder="Write your notes here..."></textarea>
+                            </div>
+                            <div id="notes-status" class="status"></div>
+                            <button type="submit">Save Notes</button>
+                        </form>
+                    </div>
+
+                    <!-- Pins Section -->
+                    <div id="section-pins" class="section">
+                        <div id="pins-list">
+                            <!-- Pins loaded dynamically -->
+                        </div>
+
+                        <h3 style="margin-top: 20px;">Add New Pin</h3>
+                        <form id="pin-form">
+                            <div class="form-group">
+                                <label for="pin-title">Title</label>
+                                <input type="text" id="pin-title" name="title" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="pin-content">Content</label>
+                                <textarea id="pin-content" name="content" required placeholder="Enter prompt content..."></textarea>
+                            </div>
+                            <button type="submit">Add Pin</button>
+                        </form>
+                    </div>
+
+                    <!-- Uploads Section -->
+                    <div id="section-uploads" class="section">
+                        <div id="uploads-list">
+                            <!-- Uploads loaded dynamically -->
+                        </div>
+
+                        <h3 style="margin-top: 20px;">Upload File</h3>
+                        <form id="upload-form">
+                            <div class="form-group">
+                                <label for="upload-label">Label (optional)</label>
+                                <input type="text" id="upload-label" name="label">
+                            </div>
+                            <div class="form-group">
+                                <label for="upload-file">File</label>
+                                <input type="file" id="upload-file" name="file" required>
+                            </div>
+                            <div id="upload-status" class="status"></div>
+                            <button type="submit">Upload</button>
+                        </form>
+                    </div>
+
+                    <!-- Log Section -->
+                    <div id="section-log" class="section">
+                        <div id="log-list">
+                            <!-- Log entries loaded dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Export Button -->
+                    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid var(--border);">
+                        <button id="export-btn" class="secondary">Export Project JSON</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
