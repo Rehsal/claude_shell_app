@@ -424,7 +424,7 @@ class ChecklistRunner:
     Uses threading.Event for pause/resume/confirm/skip signaling.
     """
 
-    def __init__(self, client, commands_loader=None, poll_timeout: float = 90.0):
+    def __init__(self, client, commands_loader=None, poll_timeout: float = 8.0):
         self.client = client
         self.commands_loader = commands_loader
         self.checklists: List[Checklist] = []
@@ -596,6 +596,8 @@ class ChecklistRunner:
                 break
             if action == "none":
                 time.sleep(0.5)
+            else:
+                pass  # no artificial delay
 
         self._log.append("Auto-run finished")
 
@@ -772,18 +774,19 @@ class ChecklistRunner:
             actions = cmd_result.get("commands_sent", []) + cmd_result.get("datarefs_set", [])
             errors = cmd_result.get("errors", [])
 
+        # Write action datarefs (switch positions) — never status datarefs
+        write_actions, write_errors = self._write_conditions(item.conditions)
+        actions.extend(write_actions)
+        errors.extend(write_errors)
+
+        # Apply Zibo-specific extra writes for items where the command is incomplete
+        self._zibo_post_command(item)
+
+        # Toggle covers that are in the wrong position
+        self._try_toggle_unsatisfied(item.conditions)
+
         # Brief pause to let command take effect
         time.sleep(0.3)
-
-        # Also write datarefs directly for any conditions not yet satisfied
-        # (commands may only handle part of the item, e.g. cover but not the switch)
-        to_satisfy = item.conditions if item.condition_logic == "&&" else item.conditions[:1]
-        if not self._check_all_conditions(item.conditions, item.condition_logic):
-            extra_actions, extra_errors = self._write_conditions(to_satisfy)
-            actions.extend(extra_actions)
-            errors.extend(extra_errors)
-            if extra_errors:
-                self._log.append(f"Write errors: {extra_errors}")
 
         # Log condition state before polling
         self._log.append(f"Executing: {item.label}|{item.checked_text}")
@@ -794,36 +797,20 @@ class ChecklistRunner:
                 idx_str = f"[{cond.index}]" if cond.index is not None else ""
                 self._log.append(f"  {cond.dataref}{idx_str} {cond.operator} {cond.value}: raw={raw} met={met}")
 
-        # Early check: if checklist conditions already met, or command datarefs verify OK, skip polling
+        # Early check: if checklist conditions already met, skip polling
         if self._check_all_conditions(item.conditions, item.condition_logic):
             self._log.append(f"Done: {item.label}|{item.checked_text}")
             self._append_history(item, "satisfied")
             self._advance()
             return {"action": "satisfied", "label": item.label,
                     "checked_text": item.checked_text, "actions": actions}
-        if cmd_result and self._verify_command_datarefs(cmd_result):
-            self._log.append(f"Done (cmd datarefs OK): {item.label}|{item.checked_text}")
-            self._append_history(item, "satisfied")
-            self._advance()
-            return {"action": "satisfied", "label": item.label,
-                    "checked_text": item.checked_text, "actions": actions}
 
         # If direct writes didn't work for all conditions, try toggling
-        # cover/switch commands for unsatisfied cover_position datarefs
-        if not self._check_all_conditions(item.conditions, item.condition_logic):
-            self._try_toggle_unsatisfied(item.conditions)
-
-        # Poll for conditions
-        elapsed = self._poll_until_satisfied(item)
+        # Poll for conditions (use item-specific timeout if available)
+        item_timeout = self._LONG_POLL_LABELS.get(item.label.strip(), self._poll_timeout)
+        elapsed = self._poll_until_satisfied(item, timeout_override=item_timeout)
 
         verified = self._check_all_conditions(item.conditions, item.condition_logic)
-
-        # Fallback: if checklist conditions use wrong datarefs (common in Zibo),
-        # check whether the command's own script datarefs were set successfully
-        if not verified and cmd_result:
-            verified = self._verify_command_datarefs(cmd_result)
-            if verified:
-                self._log.append(f"Verified via command datarefs (checklist condition dataref mismatch)")
 
         if self._skip_event.is_set():
             self._skip_event.clear()
@@ -842,7 +829,7 @@ class ChecklistRunner:
                     "checked_text": item.checked_text, "actions": actions,
                     "wait_time": round(elapsed, 1)}
         else:
-            # Timeout - wait for pilot (manual_item will append history)
+            # Conditions not met — always wait for pilot confirmation
             self._log.append(f"Needs attention: {item.label}|{item.checked_text}")
             return self._handle_manual_item(item)
 
@@ -875,12 +862,12 @@ class ChecklistRunner:
                 return False
         return True
 
-    def _poll_until_satisfied(self, item: ChecklistItem) -> float:
+    def _poll_until_satisfied(self, item: ChecklistItem, timeout_override: float = None) -> float:
         """
         Poll conditions until met, skipped, paused, or timed out.
         Returns elapsed seconds.
         """
-        max_wait = self._poll_timeout
+        max_wait = timeout_override if timeout_override is not None else self._poll_timeout
         poll_interval = 0.5
         elapsed = 0.0
 
@@ -953,10 +940,79 @@ class ChecklistRunner:
             value=resolved, index=cond.index,
         )
 
+    # Known mappings from checklist labels to command text.
+    # These handle cases where Clist.txt labels don't match commands.xml token phrases.
+    # Each entry maps LABEL -> {CHECKED_TEXT_KEYWORD: "command phrase"}
+    _LABEL_TO_COMMAND = {
+        # Electrical
+        "BATTERY": {"ON": "battery on", "OFF": "battery off"},
+        "APU GENERATORS": {"ON": "apu generator on", "OFF": "apu generator off"},
+        # Fuel
+        "FUEL PUMPS LEFT AND RIGHT": {"ON": None},  # handled by _ZIBO_POST_COMMAND
+        "FUEL PUMPS CENTER": {"ON": None},  # handled by _ZIBO_POST_COMMAND
+        # Ice protection
+        "WINDOW HEATERS": {"ON": None},  # handled by _ZIBO_POST_COMMAND
+        "WINDOW HEATER": {"ON": None},  # handled by _ZIBO_POST_COMMAND
+        # Lights
+        "ANTI COLLISION LIGHTS": {"ON": "beacon on", "OFF": "beacon off"},
+        # Signs — no commands exist; rely on direct dataref writes from conditions
+        "SEATBELTS SIGN": {"ON": "seat belts on", "AUTO": "seat belts auto"},
+        # Flight controls
+        "YAW DAMPER": {"ON": "yaw damper on", "OFF": "yaw damper off"},
+        "AUTO THROTTLE": {"ARMED": "autothrottle arm"},
+        "AUTOPILOT DISENGAGE bar": {"UP": None},  # None = no command, check only
+        # IRS alignment — no command, just wait for sim to complete alignment
+        "IRS ALIGNMENT IS COMPLETE": {"CHECK": None},
+        # Engine start
+        "ENGINE 1 START SWITCH": {"GROUND": None},  # handled by _ZIBO_POST_COMMAND
+        "ENGINE 2 START SWITCH": {"GROUND": None},  # handled by _ZIBO_POST_COMMAND
+        "ENGINE 2 START SWITCH": {"GROUND": None},  # Clist uses lowercase 'switch'
+        "ENGINE 1 START LEVER": {"IDLE": None},  # handled by _ZIBO_POST_COMMAND
+        "ENGINE 2 START LEVER": {"IDLE": None},  # handled by _ZIBO_POST_COMMAND
+        "ENGINE 1": {"STABLE IDLE": None},  # prevent ENGINE_ONE SHUTDOWN match
+        "ENGINE 2": {"STABLE IDLE": None},  # prevent ENGINE_TWO SHUTDOWN match
+        "N2 REACHING 25%": {"CHECK": None},  # read-only, just poll
+        # Emergency exit
+        "EMERGENCY EXIT LIGHTS": {"ARMED": None},  # handled by _ZIBO_POST_COMMAND
+        # Hydraulic pump — no command in commands.xml, handled by _ZIBO_POST_COMMAND
+        "SYSTEM B ELECTRIC HYDRAULIC PUMP": {"ON": None},
+        "SYSTEM A ELECTRIC HYDRAULIC PUMP": {"ON": None},
+        # Autobrake
+        "AUTO BRAKE SELECTOR": {"RTO": "auto brakes rejected takeoff"},
+    }
+
+    # Items that need longer poll time (APU startup, engine spool, etc.)
+    _LONG_POLL_LABELS = {
+        "APU START": 120.0,      # APU takes ~60s to start
+        "ENGINE 1": 60.0,        # Engine spool to stable idle
+        "ENGINE 2": 60.0,
+        "N2 REACHING 25%": 30.0, # Engine N2 spool
+        "IRS alignment is complete": 300.0,  # IRS alignment can take minutes
+        "close all Doors": 30.0,
+    }
+
     def _guess_command_text(self, item: ChecklistItem) -> List[str]:
         label = item.label.strip()
         checked = item.checked_text.strip()
         candidates = []
+
+        # Check known label-to-command mappings first
+        label_upper = label.upper()
+        if label_upper in self._LABEL_TO_COMMAND:
+            mapping = self._LABEL_TO_COMMAND[label_upper]
+            checked_first = checked.split(',')[0].split('or')[0].split('and')[0].strip().upper()
+            if checked_first in mapping:
+                if mapping[checked_first] is None:
+                    # Explicitly no command — return empty, don't fall through
+                    return []
+                candidates.append(mapping[checked_first])
+            # Also try full checked text
+            checked_upper = checked.strip().upper()
+            if checked_upper in mapping:
+                if mapping[checked_upper] is None:
+                    return []
+                if mapping[checked_upper] not in candidates:
+                    candidates.append(mapping[checked_upper])
         # Most specific first: label + first word of checked_text
         if label and checked:
             first_word = checked.split(',')[0].split('or')[0].split('and')[0].strip()
@@ -1012,6 +1068,7 @@ class ChecklistRunner:
         from .script_executor import ScriptExecutor
 
         candidates = self._guess_command_text(item)
+        self._log.append(f"  Cmd candidates: {candidates}")
         for text in candidates:
             best_cmd, matched_tokens, operands = \
                 self.commands_loader.find_command_for_input(text)
@@ -1026,6 +1083,152 @@ class ChecklistRunner:
                     "errors": result.get("errors", []),
                 }
         return None
+
+    # Zibo-specific post-command actions for items where commands.xml is incomplete.
+    # The BATTERY ON command only opens the cover — it doesn't flip the switch.
+    _ZIBO_POST_COMMAND = {
+        "BATTERY": {
+            "ON": [("laminar/B738/electric/battery_pos", 1)],
+            "OFF": [("laminar/B738/electric/battery_pos", 0)],
+        },
+        "YAW DAMPER": {
+            "ON": [("laminar/B738/toggle_switch/yaw_dumper_pos", 1)],
+            "OFF": [("laminar/B738/toggle_switch/yaw_dumper_pos", 0)],
+        },
+        "IRS MODE SELECTORS": {
+            "NAV": "irs_nav",
+        },
+        # Fuel pumps — toggle switches, direct writes rejected
+        "FUEL PUMPS LEFT AND RIGHT": {
+            "ON": [
+                ("cmd:laminar/B738/toggle_switch/fuel_pump_lft1", None),
+                ("cmd:laminar/B738/toggle_switch/fuel_pump_lft2", None),
+                ("cmd:laminar/B738/toggle_switch/fuel_pump_rgt1", None),
+                ("cmd:laminar/B738/toggle_switch/fuel_pump_rgt2", None),
+            ],
+        },
+        "FUEL PUMPS CENTER": {
+            "ON": [
+                ("cmd:laminar/B738/toggle_switch/fuel_pump_ctr1", None),
+                ("cmd:laminar/B738/toggle_switch/fuel_pump_ctr2", None),
+            ],
+        },
+        # Window heaters — toggle switches
+        "WINDOW HEATERS": {
+            "ON": [
+                ("cmd:laminar/B738/toggle_switch/window_heat_l_side", None),
+                ("cmd:laminar/B738/toggle_switch/window_heat_l_fwd", None),
+                ("cmd:laminar/B738/toggle_switch/window_heat_r_fwd", None),
+                ("cmd:laminar/B738/toggle_switch/window_heat_r_side", None),
+            ],
+        },
+        "WINDOW HEATER": {
+            "ON": [
+                ("cmd:laminar/B738/toggle_switch/window_heat_l_side", None),
+                ("cmd:laminar/B738/toggle_switch/window_heat_l_fwd", None),
+                ("cmd:laminar/B738/toggle_switch/window_heat_r_fwd", None),
+                ("cmd:laminar/B738/toggle_switch/window_heat_r_side", None),
+            ],
+        },
+        # Emergency exit lights — toggle command sequence
+        "EMERGENCY EXIT LIGHTS": {
+            "ARMED": [
+                ("cmd:laminar/B738/button_switch_cover09", None),       # open cover
+                ("cmd:laminar/B738/push_button/emer_exit_full_off", None),  # reset to known state
+                ("cmd:laminar/B738/button_switch_cover09", None),       # close cover = ARMED
+            ],
+        },
+        # Hydraulic pump — direct dataref write works
+        # (removed toggle — _write_conditions handles it)
+        # Engine start switches — rotary commands
+        "ENGINE 1 START SWITCH": {
+            "GROUND": [("cmd:laminar/B738/rotary/eng1_start_grd", None)],
+        },
+        "ENGINE 2 START SWITCH": {
+            "GROUND": [("cmd:laminar/B738/rotary/eng2_start_grd", None)],
+        },
+        # Mixture levers — direct dataref write to idle (1.0)
+        "ENGINE 1 START LEVER": {
+            "IDLE": [("laminar/B738/engine/mixture_ratio1", 1)],
+        },
+        "ENGINE 2 START LEVER": {
+            "IDLE": [("laminar/B738/engine/mixture_ratio2", 1)],
+        },
+    }
+
+    def _zibo_post_command(self, item: ChecklistItem):
+        """Apply Zibo-specific dataref writes for incomplete commands."""
+        label = item.label.strip().upper()
+        checked = item.checked_text.strip().upper()
+        mapping = self._ZIBO_POST_COMMAND.get(label)
+        if not mapping:
+            return
+        checked_key = checked.split(',')[0].split('AND')[0].strip()
+        writes = mapping.get(checked_key)
+        if not writes:
+            return
+        if isinstance(writes, str):
+            if writes == "irs_nav":
+                self._step_irs_to_nav()
+            return
+        if isinstance(writes, list):
+            # Check if conditions already met — skip toggles to avoid flipping back
+            if self._check_all_conditions(item.conditions, item.condition_logic):
+                self._log.append(f"  Zibo: already satisfied, skip toggles")
+                return
+            for entry, value in writes:
+                try:
+                    if isinstance(entry, str) and entry.startswith("cmd:"):
+                        cmd_name = entry[4:]
+                        self.client.send_command(cmd_name)
+                        self._log.append(f"  Zibo cmd: {cmd_name}")
+                    else:
+                        self.client.set_dataref(entry, value)
+                        self._log.append(f"  Zibo fix: {entry} = {value}")
+                    time.sleep(1.0)
+                except Exception as e:
+                    self._log.append(f"  Zibo fix failed: {entry} - {e}")
+
+    def _toggle_if_needed(self, status_dataref: str, target: float, toggle_cmd: str):
+        """Send a toggle command only if the current state doesn't match target."""
+        current = self._read_dataref(status_dataref)
+        try:
+            val = float(current) if current is not None else -1
+        except (TypeError, ValueError):
+            val = -1
+        if abs(val - target) < 0.05:
+            self._log.append(f"  Already at {target}: {status_dataref}")
+            return
+        try:
+            self.client.send_command(toggle_cmd)
+            self._log.append(f"  Zibo toggle: {toggle_cmd}")
+            time.sleep(0.3)
+        except Exception as e:
+            self._log.append(f"  Zibo toggle failed: {toggle_cmd} - {e}")
+
+    def _step_irs_to_nav(self):
+        """Step both IRS rotary knobs to NAV (position 2) using commands."""
+        knobs = [
+            ("laminar/B738/toggle_switch/irs_left", "laminar/B738/toggle_switch/irs_L_right"),
+            ("laminar/B738/toggle_switch/irs_right", "laminar/B738/toggle_switch/irs_R_right"),
+        ]
+        for dataref, cmd_right in knobs:
+            current = self._read_dataref(dataref)
+            try:
+                pos = int(float(current)) if current is not None else 0
+            except (TypeError, ValueError):
+                pos = 0
+            steps = 2 - pos  # NAV = 2
+            if steps <= 0:
+                self._log.append(f"  IRS {dataref} already at {pos}")
+                continue
+            for _ in range(steps):
+                try:
+                    self.client.send_command(cmd_right)
+                    self._log.append(f"  IRS step: {cmd_right}")
+                    time.sleep(0.3)
+                except Exception as e:
+                    self._log.append(f"  IRS step failed: {cmd_right} - {e}")
 
     def _try_toggle_unsatisfied(self, conditions: List[DatarefCondition]):
         """For unsatisfied conditions involving cover/switch positions, try toggling."""
@@ -1047,11 +1250,71 @@ class ChecklistRunner:
                 except Exception as e:
                     self._log.append(f"Cover toggle failed: {e}")
 
+    # Datarefs that represent simulator-computed STATUS, not pilot-controllable switches.
+    # These must NEVER be written — only the sim sets them based on physical state.
+    # Writing these fakes condition satisfaction (e.g. APU bus shows hot when it's not).
+    _READ_ONLY_DATAREFS = {
+        # APU status — sim computes from APU physical state
+        "sim/cockpit/engine/APU_running",
+        "laminar/B738/electrical/apu_bus_enable",
+        # Annunciators — sim-driven indicator lights
+        "laminar/B738/annunciator/source_off1",
+        "laminar/B738/annunciator/source_off2",
+        "laminar/B738/annunciator/hyd_stdby_rud",
+        # Failure states
+        "sim/operation/failures/rel_batter0",
+        # Switches actuated by toggle commands — direct writes rejected by Zibo
+        # yaw_damper_on — _write_conditions will try; _ZIBO_POST_COMMAND writes yaw_dumper_pos
+        "laminar/B738/toggle_switch/emer_exit_lights",
+        "laminar/B738/ice/window_heat_l_side_pos",
+        "laminar/B738/ice/window_heat_l_fwd_pos",
+        "laminar/B738/ice/window_heat_r_fwd_pos",
+        "laminar/B738/ice/window_heat_r_side_pos",
+        "laminar/B738/fuel/fuel_tank_pos_lft1",
+        "laminar/B738/fuel/fuel_tank_pos_lft2",
+        "laminar/B738/fuel/fuel_tank_pos_rgt1",
+        "laminar/B738/fuel/fuel_tank_pos_rgt2",
+        "laminar/B738/fuel/fuel_tank_pos_ctr1",
+        "laminar/B738/fuel/fuel_tank_pos_ctr2",
+        "laminar/B738/engine/starter1_pos",
+        "laminar/B738/engine/starter2_pos",
+        # mixture_ratio1/2 — writable, set directly to 1.0 for idle
+        # IRS alignment status — sim-computed, takes minutes to align
+        "laminar/B738/irs/irs_mode",
+        "laminar/B738/irs/irs2_mode",
+        # Engine parameters — sim-computed
+        "sim/cockpit2/engine/indicators/N1_percent",
+        "sim/cockpit2/engine/indicators/N2_percent",
+        "sim/cockpit2/engine/indicators/oil_pressure_psi",
+        "laminar/B738/engine/indicators/N1_percent_1",
+        "laminar/B738/engine/indicators/N1_percent_2",
+        "laminar/B738/engine/indicators/N2_percent_1",
+        "laminar/B738/engine/indicators/N2_percent_2",
+    }
+
+    def _is_read_only(self, dataref: str) -> bool:
+        """Check if a dataref is sim-computed status that must not be written."""
+        if dataref in self._READ_ONLY_DATAREFS:
+            return True
+        # Block entire annunciator and failure subtrees
+        if "annunciator" in dataref:
+            return True
+        if "failures" in dataref:
+            return True
+        # Block engine indicator subtrees
+        if "indicators/" in dataref:
+            return True
+        return False
+
     def _write_conditions(self, conditions: List[DatarefCondition]) -> Tuple[List[Dict], List[str]]:
+        """Write condition datarefs to actuate switches — but NEVER status datarefs."""
         actions = []
         errors = []
         for cond in conditions:
             if cond.operator.startswith('+'):
+                continue
+            if self._is_read_only(cond.dataref):
+                self._log.append(f"  Skip write (read-only): {cond.dataref}")
                 continue
             actual = self._resolve_cross_ref(cond)
             target = _compute_write_value(actual)
@@ -1065,6 +1328,7 @@ class ChecklistRunner:
                 else:
                     self.client.set_dataref(cond.dataref, target)
                     actions.append({"dataref": cond.dataref, "value": target})
+                self._log.append(f"  Write: {cond.dataref} = {target}")
             except Exception as e:
                 errors.append(f"Failed to set {cond.dataref}: {e}")
         return actions, errors

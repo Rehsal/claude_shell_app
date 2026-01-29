@@ -217,21 +217,25 @@
         .log-toggle:hover { color: #94a3b8; }
 
         .log-panel {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.2s;
+            height: 160px;
+            overflow-y: auto;
             background: #111827;
             font-family: monospace;
-            font-size: 0.7rem;
-            color: #64748b;
-        }
-        .log-panel.open {
-            max-height: 200px;
-            overflow-y: auto;
+            font-size: 0.75rem;
+            color: #94a3b8;
             border-top: 1px solid #374151;
             padding: 8px 20px;
+            flex-shrink: 0;
         }
-        .log-panel .entry { padding: 1px 0; }
+        .log-panel .entry { padding: 1px 0; white-space: pre-wrap; }
+        .log-panel .entry.cmd { color: #4ade80; }
+        .log-panel .entry.write { color: #60a5fa; }
+        .log-panel .entry.skip-write { color: #f59e0b; }
+        .log-panel .entry.error { color: #f87171; }
+        .log-panel .entry.done { color: #4ade80; font-weight: 600; }
+        .log-panel .entry.exec { color: #e2e8f0; }
+        .log-panel .entry.needs { color: #f59e0b; font-weight: 600; }
+        .log-panel .entry.zibo { color: #a78bfa; }
 
         .empty-state {
             text-align: center;
@@ -280,10 +284,9 @@
         <button class="btn btn-warning" id="btnPause" onclick="togglePause()" disabled>Pause</button>
         <div class="spacer"></div>
         <span class="progress-text" id="progressText"></span>
-        <span class="log-toggle" onclick="toggleLog()">Log</span>
     </div>
 
-    <!-- Log panel -->
+    <!-- Activity log — always visible -->
     <div class="log-panel" id="logPanel"></div>
 
     <script>
@@ -403,12 +406,12 @@
 
             document.getElementById('btnPause').disabled = !isRunning && !isWaiting && !isPaused;
             document.getElementById('btnPause').textContent = isPaused ? 'Resume' : 'Pause';
-            document.getElementById('btnSkip').disabled = !isRunning && !isWaiting && !isPaused;
+            document.getElementById('btnSkip').disabled = !(isRunning || isWaiting || isPaused);
 
-            // Confirm UI
+            // Confirm UI — always show confirm/skip when running or waiting
             const confirmMsg = document.getElementById('confirmMsg');
             const confirmBtn = document.getElementById('btnConfirm');
-            if (isWaiting && s.current_item) {
+            if (s.current_item && (isWaiting || isRunning)) {
                 confirmMsg.style.display = '';
                 confirmMsg.textContent = `${s.current_item.label} — ${s.current_item.checked_text}`;
                 confirmBtn.style.display = '';
@@ -420,11 +423,23 @@
             // Render history + current item
             renderItems(s);
 
-            // Log
+            // Log — always visible, color-coded
             const lp = document.getElementById('logPanel');
             if (s.log && s.log.length) {
-                lp.innerHTML = s.log.map(l => `<div class="entry">${escHtml(l)}</div>`).join('');
-                if (lp.classList.contains('open')) lp.scrollTop = lp.scrollHeight;
+                lp.innerHTML = s.log.map(l => {
+                    let cls = '';
+                    if (l.startsWith('Command:')) cls = 'cmd';
+                    else if (l.includes('Write:')) cls = 'write';
+                    else if (l.includes('Skip write')) cls = 'skip-write';
+                    else if (l.includes('Zibo')) cls = 'zibo';
+                    else if (l.startsWith('Done')) cls = 'done';
+                    else if (l.startsWith('Already OK')) cls = 'done';
+                    else if (l.startsWith('Executing:')) cls = 'exec';
+                    else if (l.startsWith('Needs attention')) cls = 'needs';
+                    else if (l.includes('Error') || l.includes('failed')) cls = 'error';
+                    return `<div class="entry ${cls}">${escHtml(l)}</div>`;
+                }).join('');
+                lp.scrollTop = lp.scrollHeight;
             }
 
             // Stop polling when completed
@@ -543,10 +558,6 @@
             } else {
                 await fetch('/api/checklist/pause', { method: 'POST' });
             }
-        }
-
-        function toggleLog() {
-            document.getElementById('logPanel').classList.toggle('open');
         }
 
         function escHtml(s) {
