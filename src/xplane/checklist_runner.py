@@ -327,8 +327,8 @@ def parse_clist(text: str) -> List[Checklist]:
     return checklists
 
 
-# CSV column names
-_CSV_COLUMNS = [
+# Tabular column names (shared by CSV and XLSX parsers)
+_COLUMNS = [
     "checklist", "order", "group", "type", "label", "status_text",
     "speak", "speak_on", "conditions", "commands", "enabled", "notes",
 ]
@@ -341,47 +341,48 @@ _TYPE_MAP = {
 }
 
 
-def parse_csv_checklist(text: str) -> List[Checklist]:
-    """Parse CSV checklist content into structured checklists."""
-    reader = csv.DictReader(io.StringIO(text))
+def _cell_str(val) -> str:
+    """Normalise a cell value (from CSV or XLSX) to a stripped string."""
+    if val is None:
+        return ""
+    return str(val).strip()
 
-    # Group rows by checklist name, preserving order
+
+def _rows_to_checklists(rows: List[Dict[str, str]]) -> List[Checklist]:
+    """Convert a list of column-keyed row dicts into Checklist objects.
+
+    Checklists are returned in the order they first appear in the rows.
+    Items within each checklist are sorted by the ``order`` column.
+    """
     checklist_items: Dict[str, List[ChecklistItem]] = {}
-    checklist_order: Dict[str, int] = {}
+    checklist_seen_order: List[str] = []  # preserves first-appearance order
 
-    for row in reader:
-        # Skip blank rows (all empty values) and comment rows
-        if not row or all(not v for v in row.values()):
-            continue
-        first_val = next((v for v in row.values() if v), "")
-        if first_val.startswith("#"):
-            continue
-
-        cl_name = (row.get("checklist") or "").strip()
+    for row in rows:
+        cl_name = _cell_str(row.get("checklist"))
         if not cl_name:
             continue
 
-        row_type = (row.get("type") or "item").strip().lower()
-        item_type = _TYPE_MAP.get(row_type)
+        row_type = _cell_str(row.get("type")) or "item"
+        item_type = _TYPE_MAP.get(row_type.lower())
         if item_type is None:
             continue
 
-        label = (row.get("label") or "").strip()
-        status_text = (row.get("status_text") or "").strip()
-        cond_str = (row.get("conditions") or "").strip()
-        # Strip CSV quoting braces if present (used to protect commas in conditions)
+        label = _cell_str(row.get("label"))
+        status_text = _cell_str(row.get("status_text"))
+        cond_str = _cell_str(row.get("conditions"))
+        # Strip braces used to protect special chars in CSV
         if cond_str.startswith("{") and cond_str.endswith("}"):
             cond_str = cond_str[1:-1]
         conditions, logic = _parse_conditions(cond_str) if cond_str else ([], "&&")
 
-        enabled_val = (row.get("enabled") or "1").strip()
+        enabled_val = _cell_str(row.get("enabled")) or "1"
         enabled = enabled_val != "0"
 
-        speak_on_val = (row.get("speak_on") or "1").strip()
+        speak_on_val = _cell_str(row.get("speak_on")) or "1"
         speak_on = speak_on_val != "0"
 
         try:
-            order = int(row.get("order") or "0")
+            order = int(float(_cell_str(row.get("order")) or "0"))
         except ValueError:
             order = 0
 
@@ -395,27 +396,90 @@ def parse_csv_checklist(text: str) -> List[Checklist]:
             condition_logic=logic,
             continue_target=continue_target,
             raw_line="",
-            group=(row.get("group") or "").strip(),
+            group=_cell_str(row.get("group")),
             order=order,
-            speak=(row.get("speak") or "").strip(),
+            speak=_cell_str(row.get("speak")),
             speak_on=speak_on,
-            command_override=(row.get("commands") or "").strip(),
+            command_override=_cell_str(row.get("commands")),
             enabled=enabled,
         )
 
         if cl_name not in checklist_items:
             checklist_items[cl_name] = []
-            checklist_order[cl_name] = order
+            checklist_seen_order.append(cl_name)
         checklist_items[cl_name].append(item)
 
-    # Build Checklist objects, sorted by the order of the first row in each group
-    sorted_names = sorted(checklist_items.keys(),
-                          key=lambda n: checklist_order.get(n, 0))
-    checklists = []
-    for name in sorted_names:
-        checklists.append(Checklist(name=name, items=checklist_items[name]))
+    # Sort items within each checklist by order column
+    for items in checklist_items.values():
+        items.sort(key=lambda it: it.order)
 
-    return checklists
+    return [Checklist(name=n, items=checklist_items[n]) for n in checklist_seen_order]
+
+
+def parse_csv_checklist(text: str) -> List[Checklist]:
+    """Parse CSV checklist content into structured checklists."""
+    reader = csv.DictReader(io.StringIO(text))
+    rows = []
+    for row in reader:
+        if not row or all(not v for v in row.values()):
+            continue
+        first_val = next((v for v in row.values() if v), "")
+        if first_val.startswith("#"):
+            continue
+        rows.append(row)
+    return _rows_to_checklists(rows)
+
+
+def parse_xlsx_checklist(xlsx_path: str, sheet_name: str = None) -> List[Checklist]:
+    """Parse an XLSX checklist workbook.
+
+    Reads the named sheet (or first sheet) and treats row 1 as headers.
+    If a named table exists on the sheet, reads from that table.
+    Opens in normal (non-read-only) mode so tables are accessible and
+    the file is released immediately after close.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(xlsx_path, data_only=True)
+    try:
+        # Pick the sheet
+        if sheet_name and sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+        else:
+            ws = wb.active
+
+        # Try to find a named table on the sheet
+        table = None
+        if ws.tables:
+            table = list(ws.tables.values())[0]
+
+        rows: List[Dict[str, str]] = []
+
+        if table:
+            from openpyxl.utils import range_boundaries
+            min_col, min_row, max_col, max_row = range_boundaries(table.ref)
+            header_row = [ws.cell(row=min_row, column=c).value for c in range(min_col, max_col + 1)]
+            headers = [_cell_str(h).lower() for h in header_row]
+            for r in range(min_row + 1, max_row + 1):
+                vals = [ws.cell(row=r, column=c).value for c in range(min_col, max_col + 1)]
+                if all(v is None for v in vals):
+                    continue
+                rows.append({headers[i]: vals[i] for i in range(len(headers))})
+        else:
+            header_row = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+            headers = [_cell_str(h).lower() for h in header_row]
+            for row_cells in ws.iter_rows(min_row=2, values_only=True):
+                if all(v is None for v in row_cells):
+                    continue
+                row_dict = {}
+                for i, val in enumerate(row_cells):
+                    if i < len(headers):
+                        row_dict[headers[i]] = val
+                rows.append(row_dict)
+    finally:
+        wb.close()
+
+    return _rows_to_checklists(rows)
 
 
 def _compute_write_value(cond: DatarefCondition) -> Optional[float]:
@@ -554,10 +618,14 @@ class ChecklistRunner:
         path = Path(clist_path)
         if not path.exists():
             raise FileNotFoundError(f"Checklist file not found: {clist_path}")
-        text = path.read_text(encoding='utf-8', errors='replace')
-        if path.suffix.lower() == '.csv':
+        ext = path.suffix.lower()
+        if ext == '.xlsx':
+            self.checklists = parse_xlsx_checklist(str(path))
+        elif ext == '.csv':
+            text = path.read_text(encoding='utf-8', errors='replace')
             self.checklists = parse_csv_checklist(text)
         else:
+            text = path.read_text(encoding='utf-8', errors='replace')
             self.checklists = parse_clist(text)
         self._checklist_map = {cl.name: cl for cl in self.checklists}
         self.state = RunnerState.IDLE
@@ -805,8 +873,22 @@ class ChecklistRunner:
 
         # sw_item - the main work
         if item.item_type == ItemType.SW_ITEM:
+            # If there's a command override but no conditions, execute and advance
+            if not item.conditions and item.command_override:
+                self._log.append(f"Command-only: {item.label}")
+                cmd_result = self._try_execute_command(item)
+                status = "executed" if cmd_result else "no_match"
+                self._append_history(item, status)
+                self._advance()
+                return {"action": status, "label": item.label}
             if not item.conditions:
-                return self._handle_manual_item(item)
+                # No conditions — try to execute command by label, then advance
+                self._log.append(f"No-condition: {item.label}")
+                cmd_result = self._try_execute_command(item)
+                status = "executed" if cmd_result else "no_match"
+                self._append_history(item, status)
+                self._advance()
+                return {"action": status, "label": item.label}
             return self._handle_dataref_item(item)
 
         return {"action": "none", "reason": "Unknown item type"}
@@ -1088,6 +1170,8 @@ class ChecklistRunner:
         "SYSTEM A ELECTRIC HYDRAULIC PUMP": {"ON": None},
         # Autobrake
         "AUTO BRAKE SELECTOR": {"RTO": "auto brakes rejected takeoff"},
+        # Engine generators — label doesn't match "GENERATOR ON" token
+        "ENGINE GENERATORS": {"ON": "generator on", "OFF": "generator off"},
     }
 
     # Items that need longer poll time (APU startup, engine spool, etc.)
@@ -1176,12 +1260,62 @@ class ChecklistRunner:
             return None
         from .script_executor import ScriptExecutor
 
-        # Use command_override if set (from CSV)
+        # Use command_override if set (from CSV/XLSX)
         if item.command_override:
             override = item.command_override.strip()
+            if override.startswith("set:"):
+                # Direct dataref write: set:dataref=value
+                try:
+                    dr, val_str = override[4:].split("=", 1)
+                    dr = dr.strip()
+                    val_raw = val_str.strip()
+                    # Parse as int if no decimal point, else float (matches API endpoint behaviour)
+                    if '.' in val_raw:
+                        val = float(val_raw)
+                    else:
+                        try:
+                            val = int(val_raw)
+                        except ValueError:
+                            val = float(val_raw)
+                    self._log.append(f"Set dataref: {dr} = {val}")
+                    print(f"[CHECKLIST] set_dataref({dr!r}, {val!r}) connected={self.client.is_connected}")
+                    result = self.client.set_dataref(dr, val)
+                    print(f"[CHECKLIST] set_dataref result={result}")
+                    return {
+                        "command": override,
+                        "commands_sent": [],
+                        "datarefs_set": [{"dataref": dr, "value": val}],
+                        "errors": [],
+                    }
+                except Exception as e:
+                    self._log.append(f"Set dataref failed: {override} - {e}")
+                    return {
+                        "command": override,
+                        "commands_sent": [],
+                        "datarefs_set": [],
+                        "errors": [str(e)],
+                    }
             if override.startswith("cmd:"):
-                # Lookup by command key/ID
                 cmd_key = override[4:].strip()
+                # If it contains '/' it's a raw X-Plane command path
+                if '/' in cmd_key:
+                    self._log.append(f"Command (raw): {cmd_key}")
+                    try:
+                        self.client.send_command(cmd_key)
+                        return {
+                            "command": cmd_key,
+                            "commands_sent": [cmd_key],
+                            "datarefs_set": [],
+                            "errors": [],
+                        }
+                    except Exception as e:
+                        return {
+                            "command": cmd_key,
+                            "commands_sent": [],
+                            "datarefs_set": [],
+                            "errors": [str(e)],
+                        }
+                # Otherwise lookup by command key in commands.xml
                 cmd = self.commands_loader.get_command(cmd_key.upper())
                 if cmd and cmd.script:
                     self._log.append(f"Command (override key): {cmd_key}")

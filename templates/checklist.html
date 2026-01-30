@@ -260,9 +260,13 @@
 
     <!-- Load bar -->
     <div class="load-bar" id="loadBar">
-        <input type="text" id="clistPath" placeholder="Path to Clist.txt (leave blank to auto-detect)">
+        <input type="text" id="clistPath" placeholder="Path to checklist file (.xlsx, .csv, or .txt — blank to auto-detect)">
         <button class="btn btn-primary" onclick="loadChecklist()">Load</button>
+        <select id="clSelect" style="padding:6px 10px;background:#1a1a2e;border:1px solid #374151;border-radius:4px;color:#fff;font-size:0.8rem;" disabled>
+            <option value="">— select checklist —</option>
+        </select>
         <button class="btn btn-success" id="btnStart" onclick="startChecklist()" disabled>Start</button>
+        <button class="btn btn-secondary" onclick="releaseChecklist()">Release</button>
     </div>
 
     <!-- Progress -->
@@ -272,7 +276,7 @@
     <div class="items-scroll" id="itemsScroll">
         <div class="empty-state">
             <h3>No Checklist Loaded</h3>
-            <p>Click Load to parse Clist.txt, then Start to begin the START checklist</p>
+            <p>Click Load to parse the checklist file, then Start to begin</p>
         </div>
     </div>
 
@@ -336,9 +340,21 @@
                 if (!r.ok) { const e = await r.json(); alert(e.detail || 'Failed'); return; }
                 const d = await r.json();
                 loaded = true;
+
+                // Populate the checklist dropdown
+                const sel = document.getElementById('clSelect');
+                sel.innerHTML = '';
+                d.checklists.forEach(name => {
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = name;
+                    sel.appendChild(opt);
+                });
+                sel.disabled = false;
                 document.getElementById('btnStart').disabled = false;
+
                 document.getElementById('itemsScroll').innerHTML =
-                    `<div class="empty-state"><h3>Loaded ${d.checklists.length} checklists</h3><p>Click Start to run the START sequence</p></div>`;
+                    `<div class="empty-state"><h3>Loaded ${d.checklists.length} checklists</h3><p>Select a checklist and click Start</p></div>`;
             } catch (e) {
                 alert('Error: ' + e.message);
             }
@@ -346,12 +362,8 @@
 
         // ---- Start / Restart ----
         async function startChecklist() {
-            // Find the START checklist
-            const listR = await fetch('/api/checklist/list');
-            const listD = await listR.json();
-            const startCl = listD.checklists.find(c => c.name.toUpperCase().includes('START'));
-            if (!startCl && listD.checklists.length === 0) { alert('No checklists loaded'); return; }
-            const name = startCl ? startCl.name : listD.checklists[0].name;
+            const name = document.getElementById('clSelect').value;
+            if (!name) { alert('Select a checklist first'); return; }
 
             const fd = new FormData();
             fd.append('name', name);
@@ -550,6 +562,19 @@
 
         async function skipItem() {
             await fetch('/api/checklist/skip', { method: 'POST' });
+        }
+
+        async function releaseChecklist() {
+            await fetch('/api/checklist/release', { method: 'POST' });
+            loaded = false;
+            lastHistoryLen = 0;
+            document.getElementById('btnStart').disabled = true;
+            document.getElementById('btnRestart').disabled = true;
+            const sel = document.getElementById('clSelect');
+            sel.innerHTML = '<option value="">— select checklist —</option>';
+            sel.disabled = true;
+            document.getElementById('itemsScroll').innerHTML =
+                '<div class="empty-state"><h3>Checklist Released</h3><p>Edit your file, then click Load to reload</p></div>';
         }
 
         async function togglePause() {

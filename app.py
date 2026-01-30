@@ -1084,7 +1084,7 @@ async def checklist_page():
 
 @app.post("/api/checklist/load")
 async def checklist_load(path: str = Form("")):
-    """Load Clist.txt from the given path or auto-detect from aircraft directory."""
+    """Load a checklist file (.xlsx, .csv, or .txt) from the given path or auto-detect."""
     runner = get_checklist_runner()
 
     # Ensure ExtPlane is connected
@@ -1094,14 +1094,20 @@ async def checklist_load(path: str = Form("")):
     runner.client = client
 
     if not path:
-        # Try to auto-detect from config
+        # Auto-detect: check app directory first, then aircraft directory
+        search_dirs = [Path(__file__).parent]
         aircraft_path = xplane_config.zibo_737_path
         if aircraft_path:
-            for name in ["CopilotAI_Checklists.csv", "Clist.txt", "clist.txt"]:
-                candidate = Path(aircraft_path) / name
+            search_dirs.append(Path(aircraft_path))
+        filenames = ["CopilotAI_Checklists.xlsx", "CopilotAI_Checklists.csv", "Clist.txt", "clist.txt"]
+        for directory in search_dirs:
+            for name in filenames:
+                candidate = directory / name
                 if candidate.exists():
                     path = str(candidate)
                     break
+            if path:
+                break
 
     if not path:
         raise HTTPException(status_code=400, detail="No path provided and could not auto-detect checklist file")
@@ -1111,6 +1117,16 @@ async def checklist_load(path: str = Form("")):
         return {"status": "ok", "checklists": names, "path": path}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/checklist/release")
+async def checklist_release():
+    """Stop the runner and clear all state so the file can be edited externally."""
+    global _checklist_runner
+    if _checklist_runner:
+        _checklist_runner.stop()
+    _checklist_runner = None
+    return {"status": "ok", "message": "Checklist released for editing"}
 
 
 @app.get("/api/checklist/list")
