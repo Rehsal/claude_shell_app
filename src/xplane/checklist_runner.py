@@ -1278,9 +1278,7 @@ class ChecklistRunner:
                         except ValueError:
                             val = float(val_raw)
                     self._log.append(f"Set dataref: {dr} = {val}")
-                    print(f"[CHECKLIST] set_dataref({dr!r}, {val!r}) connected={self.client.is_connected}")
-                    result = self.client.set_dataref(dr, val)
-                    print(f"[CHECKLIST] set_dataref result={result}")
+                    self.client.set_dataref(dr, val)
                     return {
                         "command": override,
                         "commands_sent": [],
