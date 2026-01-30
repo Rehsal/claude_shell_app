@@ -10,3 +10,5 @@ status_tmp.json
 !requirements.txt
 !package.json
 .claude/
+~$*.xlsx
+[0-9A-F][0-9A-F]*
