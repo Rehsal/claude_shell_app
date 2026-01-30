@@ -1,0 +1,86 @@
+checklist,order,group,type,label,status_text,speak,speak_on,conditions,commands,enabled,notes
+# ZIBO B737-800X Checklists for CopilotAI
+# Converted from CopilotAI_Checklists.txt
+
+# ============================================================
+# PREPUSHBACK - Cockpit preparation before pushback
+# ============================================================
+
+PREPUSHBACK,1,electrical,item,BATTERY,ON and GUARDED,,,"{(sim/cockpit2/electrical/battery_on[0]:1)&&(laminar/B738/button_switch/cover_position[2]:0)&&(sim/operation/failures/rel_batter0:0)}",,1,
+PREPUSHBACK,1,electrical,item,APU START,APU RUNNING,,,"{(sim/cockpit/engine/APU_running:1)&&(laminar/B738/electrical/apu_bus_enable:1)}",,1,Long poll - APU takes ~60s
+PREPUSHBACK,1,electrical,item,APU GENERATORS,ON,,,"{(sim/cockpit2/electrical/APU_generator_on:1)&&(laminar/B738/annunciator/source_off1:0.0)&&(laminar/B738/annunciator/source_off2:0.0)}",,1,
+PREPUSHBACK,1,electrical,item,GROUND POWER,DISCONNECTED,,,"laminar/B738/gpu_available:0",,1,
+
+PREPUSHBACK,1,navigation,item,IRS mode selectors,NAV,,,"{(laminar/B738/toggle_switch/irs_left:2.0)&&(laminar/B738/toggle_switch/irs_right:2.0}",,1,
+PREPUSHBACK,1,flight_controls,item,YAW DAMPER,ON,,,"sim/cockpit2/switches/yaw_damper_on:1.0",,1,
+
+PREPUSHBACK,1,safety,item,EMERGENCY EXIT LIGHTS,ARMED,,,"{(laminar/B738/toggle_switch/emer_exit_lights:1.0)&&(laminar/B738/button_switch/cover_position[9]:0)}",,1,
+PREPUSHBACK,1,safety,item,NO SMOKING SIGN,"ON, or AUTO",,,"laminar/B738/toggle_switch/no_smoking_pos:>0.0",,1,
+PREPUSHBACK,1,safety,item,SEATBELTS SIGN,"ON, or AUTO",,,"laminar/B738/toggle_switch/seatbelt_sign_pos:>0.0",,1,
+
+PREPUSHBACK,1,exterior,item,Windshield WIPER selectors,PARK,,,"sim/cockpit2/switches/wiper_speed:-0.0000",,1,
+PREPUSHBACK,1,ice_protection,item,WINDOW HEATERS,ON,,,"{(laminar/B738/ice/window_heat_l_side_pos:1.0)&&(laminar/B738/ice/window_heat_l_fwd_pos:1.0)&&(laminar/B738/ice/window_heat_r_fwd_pos:1.0)&&(laminar/B738/ice/window_heat_r_side_pos:1.0)}",,1,
+
+PREPUSHBACK,1,air,item,TRIM AIR switch,ON,,,"laminar/B738/air/trim_air_pos:1",,1,
+PREPUSHBACK,1,air,item,ISOLATION VALVE switch,OPEN,,,"laminar/B738/air/isolation_valve_pos:2.0000",,1,
+PREPUSHBACK,1,air,item,Packs,Off,,,"{(laminar/B738/air/l_pack_pos:0)&&(laminar/B738/air/r_pack_pos:0)}",,1,
+PREPUSHBACK,1,air,item,APU BLEED switch,ON,,,"{(laminar/B738/toggle_switch/bleed_air_apu_pos:1.0)&&(sim/operation/failures/rel_APU_press:0)}",,1,
+PREPUSHBACK,1,engines,item,IGNITION select switch,SET,,,"{(laminar/B738/toggle_switch/eng_start_source:-1)||(laminar/B738/toggle_switch/eng_start_source:1)}",,1,
+
+PREPUSHBACK,1,autopilot,item,FLIGHT DIRECTORS,ON,,,"{(laminar/B738/autopilot/flight_director_pos:1.0)&&(laminar/B738/autopilot/flight_director_fo_pos:1.0)}",,1,
+PREPUSHBACK,1,autopilot,item,AUTOPILOT DISENGAGE bar,UP,,,"laminar/B738/autopilot/disconnect_pos:0.0",,1,
+PREPUSHBACK,1,autopilot,item,MINIMUMS,SET,,,"laminar/B738/pfd/dh_pilot:>199",,1,
+PREPUSHBACK,1,instruments,item,BARO QNH,SET,,,"{(sim/cockpit2/gauges/indicators/altitude_ft_pilot:>{sim/flightmodel/position/elevation}*3.28084)&&(sim/cockpit2/gauges/indicators/altitude_ft_pilot:<{sim/flightmodel/position/elevation}*3.28084+30)}",,1,
+PREPUSHBACK,1,instruments,item,MODE selector,MAP,,,"sim/cockpit2/EFIS/map_mode:2",,1,
+PREPUSHBACK,1,instruments,item,WEATHER RADAR,OFF,,,"sim/cockpit/switches/EFIS_shows_weather:0",,1,
+
+PREPUSHBACK,1,landing_gear,item,LANDING GEAR lever,DOWN,,,"laminar/B738/switches/landing_gear:2",,1,
+PREPUSHBACK,1,landing_gear,item,AUTO BRAKE Selector,RTO,,,"{(laminar/B738/autobrake/autobrake_RTO_arm:1.0)&&(sim/operation/failures/rel_lbrakes:0)&&(sim/operation/failures/rel_rbrakes:0)}",,1,
+PREPUSHBACK,1,engines,item,N1 SET selector,AUTO,,,"laminar/B738/toggle_switch/n1_set_source:0.0",,1,
+PREPUSHBACK,1,engines,item,SPEED REFERENCE,AUTO,,,"laminar/B738/toggle_switch/spd_ref:0.0",,1,
+PREPUSHBACK,1,instruments,item,TRANSPONDER,STANDBY,,,"{(laminar/B738/knob/transponder_pos:1)&&(sim/operation/failures/rel_xpndr:0)}",,1,
+PREPUSHBACK,1,autopilot,item,AUTO THROTTLE,ARMED,,,"laminar/B738/autopilot/autothrottle_arm_pos:1.0",,1,
+PREPUSHBACK,1,autopilot,item,I A S MACH SPEED,SET V2,,,"sim/cockpit/autopilot/airspeed:>140",,1,
+PREPUSHBACK,1,autopilot,item,"Arm, V NAV",SET,,,"laminar/B738/autopilot/vnav_status1:1.0",,1,
+
+PREPUSHBACK,1,fuel,item,FUEL PUMPS LEFT and RIGHT,ON,,,"{(laminar/B738/fuel/fuel_tank_pos_lft1:1.0)&&(laminar/B738/fuel/fuel_tank_pos_lft2:1.0)&&(sim/operation/failures/rel_ele_fuepmp0:0)&&(laminar/B738/fuel/fuel_tank_pos_rgt1:1.0)&&(laminar/B738/fuel/fuel_tank_pos_rgt2:1.0)&&(sim/operation/failures/rel_ele_fuepmp1:0)}",,1,
+PREPUSHBACK,1,hydraulics,item,System B ELECTRIC HYDRAULIC PUMP,ON,,,"{(laminar/B738/toggle_switch/electric_hydro_pumps2_pos:1.0)&&(sim/operation/failures/rel_hydpmp_ele:0)}",,1,
+PREPUSHBACK,1,lights,item,ANTI COLLISION LIGHTS,ON,,,"{(sim/cockpit/electrical/beacon_lights_on:1)&&(sim/operation/failures/rel_lites_beac:0)}",,1,
+PREPUSHBACK,1,trim,item,STABILISER TRIM,SET,,,"laminar/B738/FMS/trim_set:1",,1,
+PREPUSHBACK,1,trim,item,AILERON and RUDDER TRIMS,CHECK 0,,,"{(sim/cockpit2/controls/aileron_trim:0.0)&&(sim/cockpit2/controls/rudder_trim:0.0)}",,1,
+PREPUSHBACK,1,doors,item,close all Doors,Closed,,,"{(737u/doors/L1:0)&&(737u/doors/R1:0)&&(737u/doors/R2:0)&&(737u/doors/Fwd_Cargo:0)&&(737u/doors/aft_Cargo:0)}",,1,
+
+PREPUSHBACK,1,,continue,PUSHBACK,,,,,,1,Link to PUSHBACK
+
+# ============================================================
+# PUSHBACK
+# ============================================================
+
+PUSHBACK,2,ground,item,Set CHOCK,OFF,,,"laminar/B738/fms/chock_status:0.0",,1,
+PUSHBACK,2,ground,item,PARKING BRAKE,RELEASE,,,"sim/cockpit2/controls/parking_brake_ratio:0.0",,1,
+
+PUSHBACK,2,,continue,START_ONE,,,,,,1,Link to START_ONE
+
+# ============================================================
+# START_ONE - Engine 1 start sequence
+# ============================================================
+
+START_ONE,3,air,item,AIR CONDITIONING PACKS,OFF,,,"{(laminar/B738/air/l_pack_pos:0.0)&&(laminar/B738/air/r_pack_pos:0.0)}",,1,
+START_ONE,3,engines,item,ENGINE 1 START SWITCH,GROUND,,,"{(laminar/B738/engine/starter1_pos:0)&&(sim/operation/failures/rel_startr0:0)}",,1,
+START_ONE,3,engines,item,N2 REACHING 25%,check,,,"laminar/B738/engine/indicators/N2_percent_1:>22",,1,
+START_ONE,3,engines,item,ENGINE 1 START LEVER,IDLE,,,"laminar/B738/engine/mixture_ratio1:1.0",,1,
+START_ONE,3,engines,item,ENGINE 1,STABLE IDLE,,,"laminar/B738/engine/starter1_pos:1",,1,
+
+START_ONE,3,,continue,START_TWO,,,,,,1,Link to START_TWO
+
+# ============================================================
+# START_TWO - Engine 2 start sequence
+# ============================================================
+
+START_TWO,4,engines,item,AIR CONDITIONING PACKS,OFF,,,"{(laminar/B738/air/l_pack_pos:0.0)&&(laminar/B738/air/r_pack_pos:0.0)}",,1,
+START_TWO,4,engines,item,ENGINE 2 START switch,GROUND,,,"{(laminar/B738/engine/starter2_pos:0)&&(sim/operation/failures/rel_startr1:0)}",,1,
+START_TWO,4,engines,item,N2 REACHING 25%,check,,,"laminar/B738/engine/indicators/N2_percent_2:>22",,1,
+START_TWO,4,engines,item,ENGINE 2 START LEVER,IDLE,,,"laminar/B738/engine/mixture_ratio2:1.0",,1,
+START_TWO,4,engines,item,ENGINE 2,STABLE IDLE,,,"laminar/B738/engine/starter2_pos:1",,1,
+START_TWO,4,hydraulics,item,System A ELECTRIC HYDRAULIC PUMP,ON,,,"{(laminar/B738/toggle_switch/electric_hydro_pumps1_pos:1.0)&&(sim/operation/failures/rel_hydpmp_ele:0)}",,1,
+START_TWO,4,electrical,item,ENGINE GENERATORS,ON,,,"{(sim/cockpit2/electrical/generator_on[0]:1.0)&&(sim/operation/failures/rel_genera0:0)&&(sim/cockpit2/electrical/generator_on[1]:1.0)&&(sim/operation/failures/rel_genera1:0)}",,1,

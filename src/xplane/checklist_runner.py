@@ -3,6 +3,8 @@ Checklist Copilot - Parses XChecklist Clist.txt and automatically satisfies
 checklist items by writing datarefs via ExtPlane.
 """
 
+import csv
+import io
 import logging
 import re
 import threading
@@ -48,6 +50,13 @@ class ChecklistItem:
     condition_logic: str = "&&"  # && or ||
     continue_target: str = ""  # for sw_continue
     raw_line: str = ""
+    # CSV-specific fields
+    group: str = ""
+    order: int = 0
+    speak: str = ""
+    speak_on: bool = True
+    command_override: str = ""
+    enabled: bool = True
 
 
 @dataclass
@@ -318,6 +327,97 @@ def parse_clist(text: str) -> List[Checklist]:
     return checklists
 
 
+# CSV column names
+_CSV_COLUMNS = [
+    "checklist", "order", "group", "type", "label", "status_text",
+    "speak", "speak_on", "conditions", "commands", "enabled", "notes",
+]
+
+_TYPE_MAP = {
+    "item": ItemType.SW_ITEM,
+    "void": ItemType.SW_ITEMVOID,
+    "remark": ItemType.SW_REMARK,
+    "continue": ItemType.SW_CONTINUE,
+}
+
+
+def parse_csv_checklist(text: str) -> List[Checklist]:
+    """Parse CSV checklist content into structured checklists."""
+    reader = csv.DictReader(io.StringIO(text))
+
+    # Group rows by checklist name, preserving order
+    checklist_items: Dict[str, List[ChecklistItem]] = {}
+    checklist_order: Dict[str, int] = {}
+
+    for row in reader:
+        # Skip blank rows (all empty values) and comment rows
+        if not row or all(not v for v in row.values()):
+            continue
+        first_val = next((v for v in row.values() if v), "")
+        if first_val.startswith("#"):
+            continue
+
+        cl_name = (row.get("checklist") or "").strip()
+        if not cl_name:
+            continue
+
+        row_type = (row.get("type") or "item").strip().lower()
+        item_type = _TYPE_MAP.get(row_type)
+        if item_type is None:
+            continue
+
+        label = (row.get("label") or "").strip()
+        status_text = (row.get("status_text") or "").strip()
+        cond_str = (row.get("conditions") or "").strip()
+        # Strip CSV quoting braces if present (used to protect commas in conditions)
+        if cond_str.startswith("{") and cond_str.endswith("}"):
+            cond_str = cond_str[1:-1]
+        conditions, logic = _parse_conditions(cond_str) if cond_str else ([], "&&")
+
+        enabled_val = (row.get("enabled") or "1").strip()
+        enabled = enabled_val != "0"
+
+        speak_on_val = (row.get("speak_on") or "1").strip()
+        speak_on = speak_on_val != "0"
+
+        try:
+            order = int(row.get("order") or "0")
+        except ValueError:
+            order = 0
+
+        continue_target = label if item_type == ItemType.SW_CONTINUE else ""
+
+        item = ChecklistItem(
+            item_type=item_type,
+            label=label,
+            checked_text=status_text,
+            conditions=conditions,
+            condition_logic=logic,
+            continue_target=continue_target,
+            raw_line="",
+            group=(row.get("group") or "").strip(),
+            order=order,
+            speak=(row.get("speak") or "").strip(),
+            speak_on=speak_on,
+            command_override=(row.get("commands") or "").strip(),
+            enabled=enabled,
+        )
+
+        if cl_name not in checklist_items:
+            checklist_items[cl_name] = []
+            checklist_order[cl_name] = order
+        checklist_items[cl_name].append(item)
+
+    # Build Checklist objects, sorted by the order of the first row in each group
+    sorted_names = sorted(checklist_items.keys(),
+                          key=lambda n: checklist_order.get(n, 0))
+    checklists = []
+    for name in sorted_names:
+        checklists.append(Checklist(name=name, items=checklist_items[name]))
+
+    return checklists
+
+
 def _compute_write_value(cond: DatarefCondition) -> Optional[float]:
     """Determine the value to write to satisfy a condition."""
     # Skip trigger/change-detection operators
@@ -453,9 +553,12 @@ class ChecklistRunner:
         self.stop()
         path = Path(clist_path)
         if not path.exists():
-            raise FileNotFoundError(f"Clist.txt not found: {clist_path}")
+            raise FileNotFoundError(f"Checklist file not found: {clist_path}")
         text = path.read_text(encoding='utf-8', errors='replace')
-        self.checklists = parse_clist(text)
+        if path.suffix.lower() == '.csv':
+            self.checklists = parse_csv_checklist(text)
+        else:
+            self.checklists = parse_clist(text)
         self._checklist_map = {cl.name: cl for cl in self.checklists}
         self.state = RunnerState.IDLE
         self.current_checklist = None
@@ -670,6 +773,12 @@ class ChecklistRunner:
             return {"action": "completed"}
 
         item = self.current_checklist.items[self.current_index]
+
+        # Skip disabled items (CSV enabled=0)
+        if not item.enabled:
+            self._log.append(f"[disabled] {item.label}")
+            self._advance()
+            return {"action": "skipped", "reason": "disabled", "label": item.label}
 
         # sw_itemvoid / sw_remark - display only, advance
         if item.item_type in (ItemType.SW_ITEMVOID, ItemType.SW_REMARK):
@@ -1066,6 +1175,42 @@ class ChecklistRunner:
         if not self.commands_loader:
             return None
         from .script_executor import ScriptExecutor
+
+        # Use command_override if set (from CSV)
+        if item.command_override:
+            override = item.command_override.strip()
+            if override.startswith("cmd:"):
+                # Lookup by command key/ID
+                cmd_key = override[4:].strip()
+                cmd = self.commands_loader.get_command(cmd_key.upper())
+                if cmd and cmd.script:
+                    self._log.append(f"Command (override key): {cmd_key}")
+                    executor = ScriptExecutor(self.client)
+                    result = executor.execute(cmd.script, {})
+                    return {
+                        "command": cmd_key,
+                        "commands_sent": result.get("commands_sent", []),
+                        "datarefs_set": result.get("datarefs_set", []),
+                        "errors": result.get("errors", []),
+                    }
+            else:
+                # Exact phrase — use as the sole candidate
+                candidates = [override]
+                self._log.append(f"  Cmd override: {override}")
+                for text in candidates:
+                    best_cmd, matched_tokens, operands = \
+                        self.commands_loader.find_command_for_input(text)
+                    if best_cmd and best_cmd.script:
+                        self._log.append(f"Command: {' '.join(matched_tokens)}")
+                        executor = ScriptExecutor(self.client)
+                        result = executor.execute(best_cmd.script, operands)
+                        return {
+                            "command": ' '.join(matched_tokens),
+                            "commands_sent": result.get("commands_sent", []),
+                            "datarefs_set": result.get("datarefs_set", []),
+                            "errors": result.get("errors", []),
+                        }
+                return None
 
         candidates = self._guess_command_text(item)
         self._log.append(f"  Cmd candidates: {candidates}")

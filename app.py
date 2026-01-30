@@ -1097,14 +1097,14 @@ async def checklist_load(path: str = Form("")):
         # Try to auto-detect from config
         aircraft_path = xplane_config.zibo_737_path
         if aircraft_path:
-            for name in ["Clist.txt", "clist.txt"]:
+            for name in ["CopilotAI_Checklists.csv", "Clist.txt", "clist.txt"]:
                 candidate = Path(aircraft_path) / name
                 if candidate.exists():
                     path = str(candidate)
                     break
 
     if not path:
-        raise HTTPException(status_code=400, detail="No path provided and could not auto-detect Clist.txt")
+        raise HTTPException(status_code=400, detail="No path provided and could not auto-detect checklist file")
 
     try:
         names = runner.load(path)
