@@ -1255,65 +1255,136 @@ class ChecklistRunner:
             candidates.append(label)
         return candidates
 
-    def _try_execute_command(self, item: ChecklistItem) -> Optional[Dict]:
-        if not self.commands_loader:
-            return None
+    def _execute_single_command(self, part: str) -> Optional[Dict]:
+        """Execute a single command string (set:, cmd:, or phrase lookup)."""
         from .script_executor import ScriptExecutor
 
-        # Use command_override if set (from CSV/XLSX)
-        if item.command_override:
-            override = item.command_override.strip()
-            if override.startswith("set:"):
-                # Direct dataref write: set:dataref=value
-                try:
-                    dr, val_str = override[4:].split("=", 1)
-                    dr = dr.strip()
-                    val_raw = val_str.strip()
-                    # Parse as int if no decimal point, else float (matches API endpoint behaviour)
-                    if '.' in val_raw:
+        part = part.strip()
+        if not part:
+            return None
+
+        if part.startswith("set:"):
+            # Direct dataref write: set:dataref=value
+            try:
+                dr, val_str = part[4:].split("=", 1)
+                dr = dr.strip()
+                val_raw = val_str.strip()
+                if '.' in val_raw:
+                    val = float(val_raw)
+                else:
+                    try:
+                        val = int(val_raw)
+                    except ValueError:
                         val = float(val_raw)
-                    else:
-                        try:
-                            val = int(val_raw)
-                        except ValueError:
-                            val = float(val_raw)
-                    self._log.append(f"Set dataref: {dr} = {val}")
-                    self.client.set_dataref(dr, val)
+                self._log.append(f"Set dataref: {dr} = {val}")
+                self.client.set_dataref(dr, val)
+                return {
+                    "command": part,
+                    "commands_sent": [],
+                    "datarefs_set": [{"dataref": dr, "value": val}],
+                    "errors": [],
+                }
+            except Exception as e:
+                self._log.append(f"Set dataref failed: {part} - {e}")
+                return {
+                    "command": part,
+                    "commands_sent": [],
+                    "datarefs_set": [],
+                    "errors": [str(e)],
+                }
+
+        if part.startswith("toggle:"):
+            # toggle:command_path=dataref_path:desired_value
+            # Reads the dataref; if not at desired value, fires the toggle command.
+            try:
+                rest = part[7:].strip()
+                cmd_path, dr_spec = rest.split("=", 1)
+                cmd_path = cmd_path.strip()
+                dr_path, val_str = dr_spec.rsplit(":", 1)
+                dr_path = dr_path.strip()
+                val_str = val_str.strip()
+                desired = float(val_str) if '.' in val_str else int(val_str)
+
+                current = self.client.get_dataref(dr_path)
+                if current is not None and float(current) == float(desired):
+                    self._log.append(f"Toggle skip: {dr_path} already {desired}")
                     return {
-                        "command": override,
+                        "command": cmd_path,
                         "commands_sent": [],
-                        "datarefs_set": [{"dataref": dr, "value": val}],
+                        "datarefs_set": [],
+                        "errors": [],
+                    }
+                self._log.append(f"Toggle: {cmd_path} ({dr_path}: {current} -> {desired})")
+                self.client.send_command(cmd_path)
+                return {
+                    "command": cmd_path,
+                    "commands_sent": [cmd_path],
+                    "datarefs_set": [],
+                    "errors": [],
+                }
+            except Exception as e:
+                self._log.append(f"Toggle failed: {part} - {e}")
+                return {
+                    "command": part,
+                    "commands_sent": [],
+                    "datarefs_set": [],
+                    "errors": [str(e)],
+                }
+
+        if part.startswith("cmdhold:"):
+            # Hold a command briefly using begin/end (for rotary switches, etc.)
+            import time
+            cmd_key = part[8:].strip()
+            hold_time = 0.2  # default hold duration in seconds
+            # Allow optional duration: cmdhold:0.5:sim/some/command
+            if ':' in cmd_key:
+                maybe_time, _, rest = cmd_key.partition(':')
+                try:
+                    hold_time = float(maybe_time)
+                    cmd_key = rest.strip()
+                except ValueError:
+                    pass  # not a number, treat whole thing as command path
+            self._log.append(f"Command (hold {hold_time}s): {cmd_key}")
+            try:
+                self.client.send_command_begin(cmd_key)
+                time.sleep(hold_time)
+                self.client.send_command_end(cmd_key)
+                return {
+                    "command": cmd_key,
+                    "commands_sent": [cmd_key],
+                    "datarefs_set": [],
+                    "errors": [],
+                }
+            except Exception as e:
+                return {
+                    "command": cmd_key,
+                    "commands_sent": [],
+                    "datarefs_set": [],
+                    "errors": [str(e)],
+                }
+
+        if part.startswith("cmd:"):
+            cmd_key = part[4:].strip()
+            # If it contains '/' it's a raw X-Plane command path
+            if '/' in cmd_key:
+                self._log.append(f"Command (raw): {cmd_key}")
+                try:
+                    self.client.send_command(cmd_key)
+                    return {
+                        "command": cmd_key,
+                        "commands_sent": [cmd_key],
+                        "datarefs_set": [],
                         "errors": [],
                     }
                 except Exception as e:
-                    self._log.append(f"Set dataref failed: {override} - {e}")
                     return {
-                        "command": override,
+                        "command": cmd_key,
                         "commands_sent": [],
                         "datarefs_set": [],
                         "errors": [str(e)],
                     }
-            if override.startswith("cmd:"):
-                cmd_key = override[4:].strip()
-                # If it contains '/' it's a raw X-Plane command path
-                if '/' in cmd_key:
-                    self._log.append(f"Command (raw): {cmd_key}")
-                    try:
-                        self.client.send_command(cmd_key)
-                        return {
-                            "command": cmd_key,
-                            "commands_sent": [cmd_key],
-                            "datarefs_set": [],
-                            "errors": [],
-                        }
-                    except Exception as e:
-                        return {
-                            "command": cmd_key,
-                            "commands_sent": [],
-                            "datarefs_set": [],
-                            "errors": [str(e)],
-                        }
-                # Otherwise lookup by command key in commands.xml
+            # Otherwise lookup by command key in commands.xml
+            if self.commands_loader:
                 cmd = self.commands_loader.get_command(cmd_key.upper())
                 if cmd and cmd.script:
                     self._log.append(f"Command (override key): {cmd_key}")
@@ -1325,24 +1396,52 @@ class ChecklistRunner:
                         "datarefs_set": result.get("datarefs_set", []),
                         "errors": result.get("errors", []),
                     }
-            else:
-                # Exact phrase — use as the sole candidate
-                candidates = [override]
-                self._log.append(f"  Cmd override: {override}")
-                for text in candidates:
-                    best_cmd, matched_tokens, operands = \
-                        self.commands_loader.find_command_for_input(text)
-                    if best_cmd and best_cmd.script:
-                        self._log.append(f"Command: {' '.join(matched_tokens)}")
-                        executor = ScriptExecutor(self.client)
-                        result = executor.execute(best_cmd.script, operands)
-                        return {
-                            "command": ' '.join(matched_tokens),
-                            "commands_sent": result.get("commands_sent", []),
-                            "datarefs_set": result.get("datarefs_set", []),
-                            "errors": result.get("errors", []),
-                        }
-                return None
+            return None
+
+        # Exact phrase — use as the sole candidate
+        if self.commands_loader:
+            self._log.append(f"  Cmd override: {part}")
+            best_cmd, matched_tokens, operands = \
+                self.commands_loader.find_command_for_input(part)
+            if best_cmd and best_cmd.script:
+                self._log.append(f"Command: {' '.join(matched_tokens)}")
+                executor = ScriptExecutor(self.client)
+                result = executor.execute(best_cmd.script, operands)
+                return {
+                    "command": ' '.join(matched_tokens),
+                    "commands_sent": result.get("commands_sent", []),
+                    "datarefs_set": result.get("datarefs_set", []),
+                    "errors": result.get("errors", []),
+                }
+        return None
+
+    def _try_execute_command(self, item: ChecklistItem) -> Optional[Dict]:
+        if not self.commands_loader:
+            return None
+        from .script_executor import ScriptExecutor
+
+        # Use command_override if set (from CSV/XLSX)
+        if item.command_override:
+            # Support multiple commands separated by ;
+            parts = [p for p in item.command_override.split(";") if p.strip()]
+            if len(parts) == 1:
+                return self._execute_single_command(parts[0])
+
+            merged = {
+                "command": item.command_override,
+                "commands_sent": [],
+                "datarefs_set": [],
+                "errors": [],
+            }
+            any_result = False
+            for part in parts:
+                result = self._execute_single_command(part)
+                if result:
+                    any_result = True
+                    merged["commands_sent"].extend(result.get("commands_sent", []))
+                    merged["datarefs_set"].extend(result.get("datarefs_set", []))
+                    merged["errors"].extend(result.get("errors", []))
+            return merged if any_result else None
 
         candidates = self._guess_command_text(item)
         self._log.append(f"  Cmd candidates: {candidates}")
