@@ -607,6 +607,7 @@ class ChecklistRunner:
         # Threading
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        self.auto_continue: bool = False
         self._pause_event = threading.Event()  # set = running, clear = paused
         self._confirm_event = threading.Event()
         self._skip_event = threading.Event()
@@ -804,6 +805,7 @@ class ChecklistRunner:
             "history": list(self._history),
             "progress_total": self._progress_total,
             "log": self._log[-100:],
+            "auto_continue": self.auto_continue,
         }
         if self.current_checklist and self.current_index < len(self.current_checklist.items):
             item = self.current_checklist.items[self.current_index]
@@ -859,6 +861,11 @@ class ChecklistRunner:
         # sw_continue - chain to next checklist
         if item.item_type == ItemType.SW_CONTINUE:
             target = item.continue_target
+            if not self.auto_continue:
+                self._log.append(f"[auto-continue off] skipping >> {target}")
+                self._append_history(item, "skipped")
+                self._advance()
+                return {"action": "skipped", "type": "sw_continue", "label": item.label}
             self._log.append(f">> {target}")
             self._append_history(item, "continue")
             cl = self._checklist_map.get(target)

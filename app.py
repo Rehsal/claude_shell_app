@@ -1204,6 +1204,14 @@ async def checklist_restart():
     return {"status": "ok", "state": runner.get_status()}
 
 
+@app.post("/api/checklist/auto_continue")
+async def checklist_auto_continue(enabled: bool = Form(False)):
+    """Toggle auto-continue behavior for sw_continue items."""
+    runner = get_checklist_runner()
+    runner.auto_continue = enabled
+    return {"status": "ok", "auto_continue": runner.auto_continue}
+
+
 @app.get("/api/checklist/status")
 async def checklist_status():
     """Get current checklist state."""
