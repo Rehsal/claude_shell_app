@@ -268,7 +268,7 @@
         <button class="btn btn-success" id="btnStart" onclick="startChecklist()" disabled>Start</button>
         <button class="btn btn-secondary" onclick="releaseChecklist()">Release</button>
         <label style="display:flex;align-items:center;gap:4px;color:#9ca3af;font-size:0.78rem;cursor:pointer;margin-left:4px;white-space:nowrap;">
-            <input type="checkbox" id="chkAutoContinue" onchange="toggleAutoContinue(this.checked)"> Auto-Continue
+            <input type="checkbox" id="chkAutoContinue" checked onchange="toggleAutoContinue(this.checked)"> Auto-Continue
         </label>
     </div>
 
@@ -569,7 +569,7 @@
 
         async function toggleAutoContinue(enabled) {
             const form = new FormData();
-            form.append('enabled', enabled);
+            if (enabled) form.append('enabled', 'true');
             await fetch('/api/checklist/auto_continue', { method: 'POST', body: form });
         }
 

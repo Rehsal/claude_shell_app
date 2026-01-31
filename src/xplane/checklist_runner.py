@@ -607,7 +607,7 @@ class ChecklistRunner:
         # Threading
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
-        self.auto_continue: bool = False
+        self.auto_continue: bool = True
         self._pause_event = threading.Event()  # set = running, clear = paused
         self._confirm_event = threading.Event()
         self._skip_event = threading.Event()
