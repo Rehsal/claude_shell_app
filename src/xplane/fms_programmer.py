@@ -39,7 +39,7 @@ _CDU_KEY_MAP = {
     "/": "fmc1_slash",
     ".": "fmc1_period",
     "-": "fmc1_minus",
-    " ": "fmc1_space",
+    " ": "fmc1_SP",
     "+": "fmc1_plus",
     # Function keys
     "CLR": "fmc1_clr",
@@ -47,7 +47,7 @@ _CDU_KEY_MAP = {
     "EXEC": "fmc1_exec",
     "INIT_REF": "fmc1_init_ref",
     "RTE": "fmc1_rte",
-    "DEP_ARR": "fmc1_dep_arr",
+    "DEP_ARR": "fmc1_dep_app",
     "LEGS": "fmc1_legs",
     "HOLD": "fmc1_hold",
     "PROG": "fmc1_prog",
@@ -76,14 +76,8 @@ _CDU_KEY_MAP = {
 # Zibo 737 FMC button command prefix
 _CDU_CMD_PREFIX = "laminar/B738/button/"
 
-# FMC screen datarefs (14 lines: 7 large + 7 small interleaved)
-_FMC_LINE_DATAREFS = {
-    "title": "laminar/B738/fmc1/Line00_X",
-    **{f"line_{i}_label": f"laminar/B738/fmc1/Line{i:02d}_X" for i in range(14)},
-}
-
-# Large lines (the main content lines)
-_FMC_LARGE_LINES = [f"laminar/B738/fmc1/Line{i:02d}_X" for i in range(14)]
+# FMC screen datarefs — Zibo uses Line{nn}_L for the main text content
+_FMC_LARGE_LINES = [f"laminar/B738/fmc1/Line{i:02d}_L" for i in range(14)]
 _FMC_SCRATCHPAD = "laminar/B738/fmc1/Line_entry"
 _FMC_EXEC_LIGHT = "laminar/B738/indicators/fmc_exec_lights"
 
@@ -117,6 +111,7 @@ class CDUInterface:
             logger.warning(f"Unknown CDU key: {key}")
             return
         cmd = f"{_CDU_CMD_PREFIX}{mapped}"
+        logger.debug(f"CDU press: {key} -> cmd once {cmd}")
         self.client.send_command(cmd)
         time.sleep(self.keypress_delay)
 
@@ -147,9 +142,13 @@ class CDUInterface:
         time.sleep(self.page_delay)
 
     def clear_scratchpad(self):
-        """Clear the scratchpad by pressing CLR."""
-        self.press_key("CLR")
-        time.sleep(0.1)
+        """Clear the scratchpad fully. May need multiple CLR presses."""
+        for _ in range(5):
+            sp = self.read_scratchpad()
+            if not sp or not sp.strip():
+                return
+            self.press_key("CLR")
+            time.sleep(0.15)
 
     def read_screen(self) -> List[str]:
         """Read all 14 FMC screen lines."""
@@ -400,7 +399,8 @@ class FMSProgrammer:
         d = self._data
         self._check_stop()
 
-        # Navigate to INIT REF
+        # Clear any stale scratchpad data before navigating
+        self.cdu.clear_scratchpad()
         self.cdu.press_key("INIT_REF")
         self.cdu.wait_for_page()
 
@@ -463,6 +463,7 @@ class FMSProgrammer:
         d = self._data
         self._check_stop()
 
+        self.cdu.clear_scratchpad()
         self.cdu.press_key("RTE")
         self.cdu.wait_for_page()
 
@@ -559,52 +560,66 @@ class FMSProgrammer:
         d = self._data
         self._check_stop()
 
+        self.cdu.clear_scratchpad()
         self.cdu.press_key("DEP_ARR")
         self.cdu.wait_for_page()
 
         title = self.cdu.read_line(0)
         self._log_msg(f"DEP/ARR title: {title}")
 
-        # Select DEP (LSK 1L typically)
+        # Select DEP (LSK 1L on the DEP/ARR INDEX page)
+        self.cdu.clear_scratchpad()
         self.cdu.press_lsk("L", 1)
-        self.cdu.wait_for_page()
+        self.cdu.wait_for_page(1.0)  # Extra settle time for page transition
         self._check_stop()
 
-        # Program SID
+        dep_title = self.cdu.read_line(0)
+        self._log_msg(f"DEP page title: {dep_title}")
+
+        # The DEPARTURES page shows SIDs on the left and runways on the right.
+        # Select runway first (right side), then SID if available.
+        if d.origin_runway:
+            self._log_msg(f"Looking for origin runway: {d.origin_runway}")
+            self._select_from_cdu_list(d.origin_runway, max_pages=5)
+            self.cdu.wait_for_page(1.0)
+            self._check_stop()
+
         if d.sid:
             self._log_msg(f"Looking for SID: {d.sid}")
             self._select_from_cdu_list(d.sid, max_pages=5)
-            self._check_stop()
-
-        # Select runway
-        if d.origin_runway:
-            self._log_msg(f"Looking for runway: {d.origin_runway}")
-            self._select_from_cdu_list(d.origin_runway, max_pages=3)
+            self.cdu.wait_for_page(1.0)
             self._check_stop()
 
         # EXEC for departure
         self.cdu.press_exec()
         self._check_stop()
 
-        # Now go back and select ARR
+        # Now go back to DEP/ARR INDEX and select ARR
+        self.cdu.clear_scratchpad()
         self.cdu.press_key("DEP_ARR")
         self.cdu.wait_for_page()
 
-        # Select ARR (LSK 1R typically)
-        self.cdu.press_lsk("R", 1)
-        self.cdu.wait_for_page()
+        # Select ARR for destination (LSK 2R — row 1 is origin, row 2 is dest)
+        self.cdu.clear_scratchpad()
+        self.cdu.press_lsk("R", 2)
+        self.cdu.wait_for_page(1.0)
         self._check_stop()
+
+        arr_title = self.cdu.read_line(0)
+        self._log_msg(f"ARR page title: {arr_title}")
 
         # Program STAR
         if d.star:
             self._log_msg(f"Looking for STAR: {d.star}")
             self._select_from_cdu_list(d.star, max_pages=5)
+            self.cdu.wait_for_page(1.0)
             self._check_stop()
 
         # Select approach runway
         if d.dest_runway:
             self._log_msg(f"Looking for dest runway: {d.dest_runway}")
-            self._select_from_cdu_list(d.dest_runway, max_pages=3)
+            self._select_from_cdu_list(d.dest_runway, max_pages=5)
+            self.cdu.wait_for_page(1.0)
             self._check_stop()
 
         # EXEC for arrival
@@ -612,38 +627,73 @@ class FMSProgrammer:
         self._log_msg("DEP/ARR complete")
 
     def _select_from_cdu_list(self, target: str, max_pages: int = 5) -> bool:
-        """Scan CDU lines for a matching entry and press its LSK."""
+        """Scan CDU lines for a matching entry and press its LSK.
+
+        For runway numbers, also tries common CDU prefixes like RW, RWY.
+        """
         target_upper = target.upper().strip()
 
+        # Build search variants — especially for runway numbers
+        variants = [target_upper]
+        # If target looks like a runway number (digits, optional L/C/R suffix)
+        if re.match(r'^\d{1,2}[LCR]?$', target_upper):
+            # CDU may show "RW24", "RWY24", "RUNWAY 24", or just "24"
+            variants.extend([
+                f"RW{target_upper}",
+                f"RWY{target_upper}",
+            ])
+            # If no L/C/R suffix, also try with those suffixes
+            if not target_upper[-1] in "LCR":
+                for suffix in ("L", "C", "R"):
+                    variants.append(f"RW{target_upper}{suffix}")
+                    variants.append(target_upper + suffix)
+
+        prev_content = None
         for page in range(max_pages):
             self._check_stop()
             lines = self.cdu.read_screen()
 
-            # Check each content line (skip title/labels, check lines with content)
+            # Detect page cycling (same content as previous page)
+            content_key = tuple(l.strip() for l in lines)
+            if prev_content is not None and content_key == prev_content:
+                self._log_msg(f"  Page repeated, stopping search")
+                break
+            prev_content = content_key
+
+            # Log what we see for debugging
+            non_empty = [(i, l) for i, l in enumerate(lines) if l.strip()]
+            if non_empty:
+                self._log_msg(f"  CDU page {page + 1}: {len(non_empty)} lines with content")
+                for idx, txt in non_empty[:6]:
+                    self._log_msg(f"    [{idx}] {txt.strip()}")
+
+            # Check each content line for any variant match
             for line_idx, line_text in enumerate(lines):
-                if not line_text:
+                if not line_text or not line_text.strip():
                     continue
-                if target_upper in line_text.upper():
-                    # Determine which LSK corresponds to this line
-                    # Lines 1-2 -> LSK 1, 3-4 -> LSK 2, etc. (label + data pairs)
-                    lsk_row = (line_idx // 2) + 1
-                    if lsk_row > 6:
-                        continue
-                    # Determine side: if target is in left half, use L; right half, use R
-                    # Simple heuristic: check if it appears in first or second half of line
-                    mid = len(line_text) // 2
-                    pos = line_text.upper().find(target_upper)
-                    side = "L" if pos < mid else "R"
-                    self._log_msg(f"Found '{target}' on line {line_idx}, pressing LSK {lsk_row}{side}")
-                    self.cdu.press_lsk(side, lsk_row)
-                    self.cdu.wait_for_page()
-                    return True
+                line_upper = line_text.upper()
+                for variant in variants:
+                    if variant in line_upper:
+                        # Determine which LSK corresponds to this line
+                        # Lines 0-1 -> LSK 1, 2-3 -> LSK 2, etc.
+                        lsk_row = (line_idx // 2) + 1
+                        if lsk_row > 6:
+                            continue
+                        # Determine side based on position in line
+                        mid = len(line_text) // 2
+                        pos = line_upper.find(variant)
+                        side = "L" if pos < mid else "R"
+                        self._log_msg(f"Found '{variant}' on line {line_idx}, pressing LSK {lsk_row}{side}")
+                        self.cdu.clear_scratchpad()
+                        self.cdu.press_lsk(side, lsk_row)
+                        self.cdu.wait_for_page()
+                        return True
 
             # Not found on this page, try next
             self.cdu.press_key("NEXT_PAGE")
             self.cdu.wait_for_page()
 
-        self._log_msg(f"Could not find '{target}' in CDU list after {max_pages} pages")
+        self._log_msg(f"Could not find '{target}' (tried {variants}) after {max_pages} pages")
         return False
 
     # ------------------------------------------------------------------
@@ -655,7 +705,7 @@ class FMSProgrammer:
         d = self._data
         self._check_stop()
 
-        # Navigate to PERF INIT via INIT REF
+        self.cdu.clear_scratchpad()
         self.cdu.press_key("INIT_REF")
         self.cdu.wait_for_page()
         self.cdu.press_key("NEXT_PAGE")
@@ -702,6 +752,7 @@ class FMSProgrammer:
         d = self._data
         self._check_stop()
 
+        self.cdu.clear_scratchpad()
         self.cdu.press_key("N1_LIMIT")
         self.cdu.wait_for_page()
 
@@ -725,8 +776,7 @@ class FMSProgrammer:
         d = self._data
         self._check_stop()
 
-        # Navigate to TAKEOFF REF - it's accessible from N1 LIMIT via NEXT PAGE
-        # or via INIT REF pages. Let's use INIT REF and page through.
+        self.cdu.clear_scratchpad()
         self.cdu.press_key("INIT_REF")
         self.cdu.wait_for_page()
         # Page through to TAKEOFF REF (usually 4th or 5th page in INIT REF)
@@ -767,7 +817,7 @@ class FMSProgrammer:
         """Verify VNAV pages: CLB, CRZ, DES."""
         self._check_stop()
 
-        # CLB page
+        self.cdu.clear_scratchpad()
         self.cdu.press_key("CLB")
         self.cdu.wait_for_page()
         title = self.cdu.read_line(0)
