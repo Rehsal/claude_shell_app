@@ -393,6 +393,7 @@ class ScriptExecutor:
         if match:
             dataref = match.group(1)
             index = int(self._evaluate_expression(match.group(2)))
+            index = max(0, index - 1)  # XPRemote uses 1-based indices
             value = self._evaluate_expression(match.group(3))
             # For array values, we need to format as [index]=value
             # ExtPlane uses: set dataref[index] value
@@ -492,6 +493,7 @@ class ScriptExecutor:
         if match:
             dataref = match.group(1)
             index = int(self._evaluate_expression(match.group(2).strip()))
+            index = max(0, index - 1)  # XPRemote uses 1-based indices
             value = self.client.get_dataref(dataref, timeout=1.0)
             if isinstance(value, list) and index < len(value):
                 return value[index]
@@ -511,6 +513,7 @@ class ScriptExecutor:
             if idx_match:
                 base = idx_match.group(1)
                 index = int(idx_match.group(2))
+                index = max(0, index - 1)  # XPRemote uses 1-based indices
                 value = self.client.get_dataref(base, timeout=1.0)
                 if isinstance(value, list) and index < len(value):
                     return value[index]
