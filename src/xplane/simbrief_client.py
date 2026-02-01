@@ -118,7 +118,13 @@ class SimBriefClient:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 raw = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
-            raise RuntimeError(f"SimBrief API error: HTTP {e.code}") from e
+            # Try to read the error body for a better message
+            try:
+                body = json.loads(e.read().decode("utf-8"))
+                msg = body.get("fetch", {}).get("status", f"HTTP {e.code}")
+            except Exception:
+                msg = f"HTTP {e.code}"
+            raise RuntimeError(f"SimBrief: {msg}") from e
         except urllib.error.URLError as e:
             raise RuntimeError(f"SimBrief connection error: {e.reason}") from e
 

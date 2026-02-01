@@ -1283,12 +1283,13 @@ async def fms_page():
 @app.post("/api/fms/simbrief/fetch")
 async def fms_simbrief_fetch(pilot_id: str = Form("")):
     """Fetch SimBrief OFP."""
+    import asyncio
     fms = get_fms_programmer()
     pid = pilot_id or xplane_config.simbrief_pilot_id
     if not pid:
         raise HTTPException(status_code=400, detail="No SimBrief pilot ID provided")
     try:
-        data = fms.fetch_simbrief(pid)
+        data = await asyncio.to_thread(fms.fetch_simbrief, pid)
         # Save pilot ID to config for next time
         if pilot_id and pilot_id != xplane_config.simbrief_pilot_id:
             xplane_config.simbrief_pilot_id = pilot_id
@@ -1410,8 +1411,9 @@ async def fms_status():
 @app.get("/api/fms/cdu/screen")
 async def fms_cdu_screen():
     """Read current CDU screen."""
+    import asyncio
     fms = get_fms_programmer()
-    return fms.read_cdu_screen()
+    return await asyncio.to_thread(fms.read_cdu_screen)
 
 
 if __name__ == "__main__":
