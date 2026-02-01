@@ -6,6 +6,7 @@ data from a SimBrief OFP. Reads the CDU screen datarefs to verify
 each entry.
 """
 
+import base64
 import logging
 import re
 import threading
@@ -87,6 +88,19 @@ _FMC_SCRATCHPAD = "laminar/B738/fmc1/Line_entry"
 _FMC_EXEC_LIGHT = "laminar/B738/indicators/fmc_exec_lights"
 
 
+def _decode_fmc_line(val) -> str:
+    """Decode an FMC line dataref value. May be base64-encoded bytes."""
+    if val is None:
+        return ""
+    s = str(val)
+    # ExtPlane returns byte datarefs as base64
+    try:
+        decoded = base64.b64decode(s).decode("utf-8", errors="replace").rstrip("\x00")
+        return decoded
+    except Exception:
+        return s
+
+
 class CDUInterface:
     """Low-level CDU abstraction for the Zibo 737 FMC."""
 
@@ -142,19 +156,19 @@ class CDUInterface:
         lines = []
         for dr in _FMC_LARGE_LINES:
             val = self.client.get_dataref(dr, timeout=0.5)
-            lines.append(str(val) if val else "")
+            lines.append(_decode_fmc_line(val))
         return lines
 
     def read_scratchpad(self) -> str:
         """Read the scratchpad/entry line."""
         val = self.client.get_dataref(_FMC_SCRATCHPAD, timeout=0.5)
-        return str(val) if val else ""
+        return _decode_fmc_line(val)
 
     def read_line(self, line_num: int) -> str:
         """Read a specific screen line (0-13)."""
         if 0 <= line_num < len(_FMC_LARGE_LINES):
             val = self.client.get_dataref(_FMC_LARGE_LINES[line_num], timeout=0.5)
-            return str(val) if val else ""
+            return _decode_fmc_line(val)
         return ""
 
     def verify_text(self, expected: str, line: int, retries: int = 2,
