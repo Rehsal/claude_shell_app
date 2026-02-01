@@ -255,6 +255,7 @@
         </div>
         <div class="spacer"></div>
         <span class="runner-badge idle" id="runnerBadge">IDLE</span>
+        <span id="serverVersion" style="color:#6b7280;font-size:0.65rem;margin-left:8px;"></span>
         <button class="btn btn-primary" id="btnRestart" onclick="restartChecklist()" disabled>Restart</button>
     </div>
 
@@ -269,6 +270,9 @@
         <button class="btn btn-secondary" onclick="releaseChecklist()">Release</button>
         <label style="display:flex;align-items:center;gap:4px;color:#9ca3af;font-size:0.78rem;cursor:pointer;margin-left:4px;white-space:nowrap;">
             <input type="checkbox" id="chkAutoContinue" checked onchange="toggleAutoContinue(this.checked)"> Auto-Continue
+        </label>
+        <label style="display:flex;align-items:center;gap:4px;color:#9ca3af;font-size:0.78rem;cursor:pointer;margin-left:4px;white-space:nowrap;">
+            <input type="checkbox" id="chkSpeech" checked onchange="toggleSpeech(this.checked)"> Speech
         </label>
     </div>
 
@@ -303,9 +307,23 @@
         let pollTimer = null;
         let paused = false;
 
+        let pageVersion = document.querySelector('meta[name="server-version"]')?.content || '';
+
         document.addEventListener('DOMContentLoaded', async () => {
+            document.getElementById('serverVersion').textContent = 'v' + pageVersion;
             await checkConnection();
             setInterval(checkConnection, 10000);
+            // Check for server restart — auto-refresh if version changes
+            setInterval(async () => {
+                try {
+                    const r = await fetch('/api/version');
+                    const d = await r.json();
+                    if (pageVersion && d.version !== pageVersion) {
+                        console.log('Server restarted, refreshing...');
+                        location.reload();
+                    }
+                } catch {}
+            }, 5000);
         });
 
         // ---- Connection ----
@@ -357,7 +375,7 @@
                 document.getElementById('btnStart').disabled = false;
 
                 document.getElementById('itemsScroll').innerHTML =
-                    `<div class="empty-state"><h3>Loaded ${d.checklists.length} checklists</h3><p>Select a checklist and click Start</p></div>`;
+                    `<div class="empty-state"><h3>Loaded ${d.checklists.length} checklists</h3><p>${d.summary || 'Select a checklist and click Start'}</p></div>`;
             } catch (e) {
                 alert('Error: ' + e.message);
             }
@@ -389,7 +407,7 @@
         // ---- Polling ----
         function startPolling() {
             if (pollTimer) return;
-            pollTimer = setInterval(poll, 1500);
+            pollTimer = setInterval(poll, 500);
             poll();
         }
 
@@ -423,6 +441,12 @@
             document.getElementById('btnPause').textContent = isPaused ? 'Resume' : 'Pause';
             document.getElementById('btnSkip').disabled = !(isRunning || isWaiting || isPaused);
 
+            // Sync settings checkboxes
+            if (s.auto_continue !== undefined)
+                document.getElementById('chkAutoContinue').checked = s.auto_continue;
+            if (s.speech_enabled !== undefined)
+                document.getElementById('chkSpeech').checked = s.speech_enabled;
+
             // Confirm UI — always show confirm/skip when running or waiting
             const confirmMsg = document.getElementById('confirmMsg');
             const confirmBtn = document.getElementById('btnConfirm');
@@ -454,7 +478,8 @@
                     else if (l.includes('Error') || l.includes('failed')) cls = 'error';
                     return `<div class="entry ${cls}">${escHtml(l)}</div>`;
                 }).join('');
-                lp.scrollTop = lp.scrollHeight;
+                const nearBottom = lp.scrollHeight - lp.scrollTop - lp.clientHeight < 80;
+                if (nearBottom) lp.scrollTop = lp.scrollHeight;
             }
 
             // Stop polling when completed
@@ -479,6 +504,7 @@
                         container.appendChild(hdr);
                     }
                     container.appendChild(makeHistoryRow(h));
+                    if (h.speak) { console.log('TTS:', h.speak); speak(h.speak); }
                 }
                 lastHistoryLen = history.length;
             }
@@ -542,6 +568,7 @@
             else if (isRemark) { iconCls = 'icon-remark'; iconChar = '&#8505;'; }
             else if (isContinue) { iconCls = 'icon-pending'; iconChar = '&#187;'; }
             else if (isSkipped) { iconCls = 'icon-skip'; iconChar = '&#8212;'; }
+            else if (h.status === 'timeout') { iconCls = 'icon-skip'; iconChar = '&#8987;'; }
             else if (h.status === 'error') { iconCls = 'icon-error'; iconChar = '!'; }
             else { iconCls = 'icon-pending'; iconChar = '?'; }
 
@@ -565,6 +592,46 @@
 
         async function skipItem() {
             await fetch('/api/checklist/skip', { method: 'POST' });
+        }
+
+        let speechQueue = [];
+        let isSpeaking = false;
+
+        function speak(text) {
+            if (!window.speechSynthesis) {
+                fetch('/api/checklist/speech_done', { method: 'POST' });
+                return;
+            }
+            speechQueue.push(text);
+            if (!isSpeaking) speakNext();
+        }
+
+        function speakNext() {
+            if (speechQueue.length === 0) {
+                isSpeaking = false;
+                return;
+            }
+            isSpeaking = true;
+            const text = speechQueue.shift();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = 1.1;
+            utterance.pitch = 1.0;
+            utterance.volume = 1.0;
+            utterance.onend = () => {
+                fetch('/api/checklist/speech_done', { method: 'POST' });
+                speakNext();
+            };
+            utterance.onerror = () => {
+                fetch('/api/checklist/speech_done', { method: 'POST' });
+                speakNext();
+            };
+            speechSynthesis.speak(utterance);
+        }
+
+        async function toggleSpeech(enabled) {
+            const form = new FormData();
+            if (enabled) form.append('enabled', 'true');
+            await fetch('/api/checklist/speech', { method: 'POST', body: form });
         }
 
         async function toggleAutoContinue(enabled) {

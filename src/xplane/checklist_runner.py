@@ -57,6 +57,7 @@ class ChecklistItem:
     speak_on: bool = True
     command_override: str = ""
     enabled: bool = True
+    wait: bool = False
 
 
 @dataclass
@@ -330,7 +331,7 @@ def parse_clist(text: str) -> List[Checklist]:
 # Tabular column names (shared by CSV and XLSX parsers)
 _COLUMNS = [
     "checklist", "order", "group", "type", "label", "status_text",
-    "speak", "speak_on", "conditions", "commands", "enabled", "notes",
+    "speak", "speak_on", "conditions", "commands", "enabled", "wait", "notes",
 ]
 
 _TYPE_MAP = {
@@ -381,6 +382,9 @@ def _rows_to_checklists(rows: List[Dict[str, str]]) -> List[Checklist]:
         speak_on_val = _cell_str(row.get("speak_on")) or "1"
         speak_on = speak_on_val != "0"
 
+        wait_val = _cell_str(row.get("wait")) or "0"
+        wait = wait_val == "1"
+
         try:
             order = int(float(_cell_str(row.get("order")) or "0"))
         except ValueError:
@@ -402,6 +406,7 @@ def _rows_to_checklists(rows: List[Dict[str, str]]) -> List[Checklist]:
             speak_on=speak_on,
             command_override=_cell_str(row.get("commands")),
             enabled=enabled,
+            wait=wait,
         )
 
         if cl_name not in checklist_items:
@@ -608,6 +613,9 @@ class ChecklistRunner:
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self.auto_continue: bool = True
+        self.speech_enabled: bool = True
+        self._speech_event = threading.Event()
+        self._speech_event.set()  # start unblocked
         self._pause_event = threading.Event()  # set = running, clear = paused
         self._confirm_event = threading.Event()
         self._skip_event = threading.Event()
@@ -629,6 +637,11 @@ class ChecklistRunner:
             text = path.read_text(encoding='utf-8', errors='replace')
             self.checklists = parse_clist(text)
         self._checklist_map = {cl.name: cl for cl in self.checklists}
+        total_items = sum(len(cl.items) for cl in self.checklists)
+        from datetime import datetime
+        mtime = datetime.fromtimestamp(path.stat().st_mtime).strftime("%I:%M:%S %p")
+        self._load_summary = f"{len(self.checklists)} checklists, {total_items} items — file saved {mtime}"
+        print(f"[checklist] Loaded {self._load_summary}")
         self.state = RunnerState.IDLE
         self.current_checklist = None
         self.current_index = 0
@@ -781,15 +794,29 @@ class ChecklistRunner:
 
     def _append_history(self, item: ChecklistItem, status: str):
         """Append a processed item to the history list."""
-        self._history.append({
+        entry: Dict[str, Any] = {
             "label": item.label,
             "checked_text": item.checked_text,
             "type": item.item_type.value,
             "status": status,
             "section": self._current_section,
             "continue_target": item.continue_target if item.item_type == ItemType.SW_CONTINUE else "",
-        })
+        }
+        if self.speech_enabled and item.speak_on and item.speak:
+            entry["speak"] = item.speak
+        self._history.append(entry)
         self._progress_total += 1
+        # Block runner until client-side TTS signals completion
+        if entry.get("speak"):
+            self._speech_event.clear()
+            # Timeout based on word count as fallback (generous to avoid cutoff)
+            word_count = len(entry["speak"].split())
+            timeout = max(4.0, word_count * 0.8)
+            self._speech_event.wait(timeout=timeout)
+
+    def speech_done(self):
+        """Called by the API when client-side TTS finishes an utterance."""
+        self._speech_event.set()
 
     def get_status(self) -> Dict:
         result: Dict[str, Any] = {
@@ -806,6 +833,7 @@ class ChecklistRunner:
             "progress_total": self._progress_total,
             "log": self._log[-100:],
             "auto_continue": self.auto_continue,
+            "speech_enabled": self.speech_enabled,
         }
         if self.current_checklist and self.current_index < len(self.current_checklist.items):
             item = self.current_checklist.items[self.current_index]
@@ -956,18 +984,71 @@ class ChecklistRunner:
             return {"action": "skipped", "type": "trigger_only",
                     "label": item.label, "checked_text": item.checked_text}
 
+        # Determine if all non-trigger conditions are read-only (sim state)
+        non_trigger = [c for c in item.conditions if not c.operator.startswith('+')]
+        all_read_only = all(self._is_read_only(c.dataref) for c in non_trigger) if non_trigger else False
+
         # Already satisfied?
         if self._check_all_conditions(item.conditions, item.condition_logic):
             self._log.append(f"Already OK: {item.label}|{item.checked_text}")
+            # For read-only conditions already met, fire command now
+            if all_read_only and item.command_override:
+                self._try_execute_command(item)
             self._append_history(item, "satisfied")
             self._advance()
             return {"action": "already_met", "label": item.label,
                     "checked_text": item.checked_text}
 
-        # Execute matching command first (handles covers, spring switches, etc.)
-        cmd_result = self._try_execute_command(item)
         actions = []
         errors = []
+
+        if all_read_only:
+            # Read-only conditions (N2, indicators): wait FIRST, command AFTER
+            self._log.append(f"Waiting: {item.label}|{item.checked_text}")
+            for cond in non_trigger:
+                raw = self._read_dataref(cond.dataref, cond.index)
+                met = _check_condition(cond, raw)
+                idx_str = f"[{cond.index}]" if cond.index is not None else ""
+                self._log.append(f"  {cond.dataref}{idx_str} {cond.operator} {cond.value}: raw={raw} met={met}")
+
+            default_timeout = 120.0
+            item_timeout = self._LONG_POLL_LABELS.get(item.label.strip(), default_timeout)
+            elapsed = self._poll_until_satisfied(item, timeout_override=item_timeout)
+            verified = self._check_all_conditions(item.conditions, item.condition_logic)
+
+            if self._skip_event.is_set():
+                self._skip_event.clear()
+                self._log.append(f"Skipped: {item.label}")
+                self._append_history(item, "skipped")
+                self._advance()
+                self.state = RunnerState.RUNNING
+                return {"action": "skipped", "label": item.label}
+
+            if verified:
+                # Conditions met — NOW fire the command
+                cmd_result = self._try_execute_command(item)
+                if cmd_result:
+                    actions = cmd_result.get("commands_sent", []) + cmd_result.get("datarefs_set", [])
+                wait_str = f" ({elapsed:.0f}s)" if elapsed > 1 else ""
+                self._log.append(f"Done{wait_str}: {item.label}|{item.checked_text}")
+                self._append_history(item, "satisfied")
+                self._advance()
+                return {"action": "satisfied", "label": item.label,
+                        "checked_text": item.checked_text, "actions": actions,
+                        "wait_time": round(elapsed, 1)}
+            else:
+                if item.wait:
+                    # wait=1: block until condition met or user skips
+                    self._log.append(f"Waiting (wait=1): {item.label}|{item.checked_text}")
+                    return self._handle_manual_item(item)
+                self._log.append(f"Timeout — skipping: {item.label}|{item.checked_text}")
+                self._append_history(item, "timeout")
+                self._advance()
+                return {"action": "timeout", "label": item.label,
+                        "checked_text": item.checked_text}
+
+        # Writable conditions: execute command FIRST to actuate, then poll to verify
+        cmd_result = self._try_execute_command(item)
         if cmd_result:
             actions = cmd_result.get("commands_sent", []) + cmd_result.get("datarefs_set", [])
             errors = cmd_result.get("errors", [])
@@ -1003,8 +1084,6 @@ class ChecklistRunner:
             return {"action": "satisfied", "label": item.label,
                     "checked_text": item.checked_text, "actions": actions}
 
-        # If direct writes didn't work for all conditions, try toggling
-        # Poll for conditions (use item-specific timeout if available)
         item_timeout = self._LONG_POLL_LABELS.get(item.label.strip(), self._poll_timeout)
         elapsed = self._poll_until_satisfied(item, timeout_override=item_timeout)
 
@@ -1027,9 +1106,14 @@ class ChecklistRunner:
                     "checked_text": item.checked_text, "actions": actions,
                     "wait_time": round(elapsed, 1)}
         else:
-            # Conditions not met — always wait for pilot confirmation
-            self._log.append(f"Needs attention: {item.label}|{item.checked_text}")
-            return self._handle_manual_item(item)
+            if item.wait:
+                self._log.append(f"Waiting (wait=1): {item.label}|{item.checked_text}")
+                return self._handle_manual_item(item)
+            self._log.append(f"Timeout — skipping: {item.label}|{item.checked_text}")
+            self._append_history(item, "timeout")
+            self._advance()
+            return {"action": "timeout", "label": item.label,
+                    "checked_text": item.checked_text, "actions": actions}
 
     def _verify_command_datarefs(self, cmd_result: Dict) -> bool:
         """Check if the command's own script datarefs were set to their intended values."""
@@ -1450,21 +1534,21 @@ class ChecklistRunner:
                     merged["errors"].extend(result.get("errors", []))
             return merged if any_result else None
 
-        candidates = self._guess_command_text(item)
-        self._log.append(f"  Cmd candidates: {candidates}")
-        for text in candidates:
-            best_cmd, matched_tokens, operands = \
-                self.commands_loader.find_command_for_input(text)
-            if best_cmd and best_cmd.script:
-                self._log.append(f"Command: {' '.join(matched_tokens)}")
-                executor = ScriptExecutor(self.client)
-                result = executor.execute(best_cmd.script, operands)
-                return {
-                    "command": ' '.join(matched_tokens),
-                    "commands_sent": result.get("commands_sent", []),
-                    "datarefs_set": result.get("datarefs_set", []),
-                    "errors": result.get("errors", []),
-                }
+        # Exact lookup: "{label} {status_text}" in commands.xml — no guessing
+        text = f"{item.label} {item.checked_text}".strip()
+        self._log.append(f"  Cmd lookup: {text!r}")
+        best_cmd, matched_tokens, operands = \
+            self.commands_loader.find_command_for_input(text)
+        if best_cmd and best_cmd.script:
+            self._log.append(f"Command: {' '.join(matched_tokens)}")
+            executor = ScriptExecutor(self.client)
+            result = executor.execute(best_cmd.script, operands)
+            return {
+                "command": ' '.join(matched_tokens),
+                "commands_sent": result.get("commands_sent", []),
+                "datarefs_set": result.get("datarefs_set", []),
+                "errors": result.get("errors", []),
+            }
         return None
 
     # Zibo-specific post-command actions for items where commands.xml is incomplete.
@@ -1697,7 +1781,6 @@ class ChecklistRunner:
             if cond.operator.startswith('+'):
                 continue
             if self._is_read_only(cond.dataref):
-                self._log.append(f"  Skip write (read-only): {cond.dataref}")
                 continue
             actual = self._resolve_cross_ref(cond)
             target = _compute_write_value(actual)

@@ -26,6 +26,10 @@ from src.xplane.script_executor import ScriptExecutor
 
 load_dotenv()
 
+# Server version — changes every restart so UI can detect stale cache
+SERVER_VERSION = datetime.now().strftime("%H:%M:%S")
+print(f"[server] Starting version {SERVER_VERSION}")
+
 app = FastAPI(title="Claude Shell App", version="1.0.0")
 
 # Initialize X-Plane commands loader (singleton)
@@ -1075,11 +1079,20 @@ def get_checklist_runner() -> ChecklistRunner:
     return _checklist_runner
 
 
+@app.get("/api/version")
+async def api_version():
+    """Return server version for cache validation."""
+    return {"version": SERVER_VERSION}
+
+
 @app.get("/checklist", response_class=HTMLResponse)
 async def checklist_page():
-    """Serve the Checklist Copilot UI."""
+    """Serve the Checklist Copilot UI with cache-busting version."""
     with open("templates/checklist.html", "r", encoding="utf-8") as f:
-        return f.read()
+        html = f.read()
+    # Inject version so browser always gets fresh content
+    html = html.replace("</head>", f'<meta name="server-version" content="{SERVER_VERSION}"></head>', 1)
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.post("/api/checklist/load")
@@ -1114,7 +1127,8 @@ async def checklist_load(path: str = Form("")):
 
     try:
         names = runner.load(path)
-        return {"status": "ok", "checklists": names, "path": path}
+        return {"status": "ok", "checklists": names, "path": path,
+                "summary": runner._load_summary}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -1202,6 +1216,22 @@ async def checklist_restart():
     runner = get_checklist_runner()
     runner.restart()
     return {"status": "ok", "state": runner.get_status()}
+
+
+@app.post("/api/checklist/speech")
+async def checklist_speech(enabled: bool = Form(False)):
+    """Toggle speech (TTS) for checklist items."""
+    runner = get_checklist_runner()
+    runner.speech_enabled = enabled
+    return {"status": "ok", "speech_enabled": runner.speech_enabled}
+
+
+@app.post("/api/checklist/speech_done")
+async def checklist_speech_done():
+    """Signal that client-side TTS has finished speaking."""
+    runner = get_checklist_runner()
+    runner.speech_done()
+    return {"status": "ok"}
 
 
 @app.post("/api/checklist/auto_continue")

@@ -41,15 +41,17 @@ class Token:
             - 0: No match
         """
         word_lower = word.lower().strip()
+        word_norm = word_lower.replace('_', ' ')
 
         # Exact match to phrase is best
-        if word_lower == self.phrase.lower():
+        if word_lower == self.phrase.lower() or word_norm == self.phrase.lower():
             return (True, 100)
 
         # Try regex match
         if self.pattern:
             try:
-                match = re.fullmatch(self.pattern, word_lower, re.IGNORECASE)
+                match = re.fullmatch(self.pattern, word_lower, re.IGNORECASE) or \
+                       re.fullmatch(self.pattern, word_norm, re.IGNORECASE)
                 if match:
                     # Score based on how specific the match is
                     # Shorter patterns = more specific = higher score
