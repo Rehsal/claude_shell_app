@@ -160,7 +160,8 @@ class SimBriefClient:
         d.airline = general.get("icao_airline", "")
         d.cost_index = _int(general.get("costindex", 0))
         d.initial_altitude = _int(general.get("initial_altitude", 0))
-        d.cruise_altitude = _int(general.get("stepclimb_string", general.get("initial_altitude", "0")).split("/")[0])
+        # stepclimb_string format varies: "KRSW/0130" or "FL350/..." — use initial_altitude as primary
+        d.cruise_altitude = _int(general.get("initial_altitude", 0))
 
         # Origin/dest details
         d.origin_runway = origin_info.get("plan_rwy", "")
