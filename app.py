@@ -5,6 +5,7 @@ Includes X-Plane Copilot integration for XPRemote commands.
 Now uses ScriptExecutor for full script execution.
 """
 
+import asyncio
 import json
 import os
 import shutil
@@ -1360,6 +1361,17 @@ async def fms_simbrief_data():
             for w in data.navlog[:50]
         ],
     }
+
+
+@app.post("/api/fms/clear")
+async def fms_clear():
+    """Clear the current FMC route."""
+    fms = get_fms_programmer()
+    client = get_client()
+    if not client.is_connected:
+        client.connect()
+    await asyncio.to_thread(fms.clear_route)
+    return {"status": "ok", "message": "FMC route cleared"}
 
 
 @app.post("/api/fms/program")

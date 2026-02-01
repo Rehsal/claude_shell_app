@@ -455,6 +455,37 @@ class FMSProgrammer:
         self._log_msg("INIT REF complete")
 
     # ------------------------------------------------------------------
+    # Clear FMC route
+    # ------------------------------------------------------------------
+
+    def clear_route(self):
+        """Clear the current FMC route by deleting origin/dest on RTE page."""
+        self._ensure_connected()
+        self._log_msg("Clearing FMC route...")
+
+        self.cdu.clear_scratchpad()
+        self.cdu.press_key("RTE")
+        self.cdu.wait_for_page()
+
+        # Press DEL key then LSK 1L (origin) to delete it
+        self.cdu.press_key("DEL")
+        self.cdu.press_lsk("L", 1)
+        self.cdu.wait_for_page()
+
+        # Press DEL key then LSK 1R (destination) to delete it
+        self.cdu.press_key("DEL")
+        self.cdu.press_lsk("R", 1)
+        self.cdu.wait_for_page()
+
+        # EXEC the deletion
+        self.cdu.press_exec()
+        self.cdu.wait_for_page()
+
+        # Clear DEP/ARR by pressing DEP_ARR and checking
+        self.cdu.clear_scratchpad()
+        self._log_msg("FMC route cleared")
+
+    # ------------------------------------------------------------------
     # Page: ROUTE
     # ------------------------------------------------------------------
 
@@ -567,10 +598,36 @@ class FMSProgrammer:
         title = self.cdu.read_line(0)
         self._log_msg(f"DEP/ARR title: {title}")
 
-        # Select DEP (LSK 1L on the DEP/ARR INDEX page)
+        # Read DEP/ARR INDEX and find origin/destination rows
+        # FMC line layout: line 0 = title, lines 1+2 = LSK 1, lines 3+4 = LSK 2, etc.
+        # Use first match only (lines repeat due to small/large font overlay)
+        index_lines = self.cdu.read_screen()
+        origin_lsk = 1  # default
+        dest_lsk = 2    # default
+        origin_found = False
+        dest_found = False
+        for i, line in enumerate(index_lines):
+            if i < 1:
+                continue
+            line_upper = line.upper().strip() if line else ""
+            lsk = (i + 1) // 2
+            if lsk < 1 or lsk > 6:
+                continue
+            if not origin_found and d.origin and d.origin in line_upper:
+                origin_lsk = lsk
+                origin_found = True
+            if not dest_found and d.destination and d.destination in line_upper:
+                dest_lsk = lsk
+                dest_found = True
+        # If both map to same LSK, destination must be the next row
+        if origin_lsk == dest_lsk:
+            dest_lsk = origin_lsk + 1
+        self._log_msg(f"DEP/ARR INDEX: origin {d.origin} -> LSK {origin_lsk}, dest {d.destination} -> LSK {dest_lsk}")
+
+        # Select DEP for origin
         self.cdu.clear_scratchpad()
-        self.cdu.press_lsk("L", 1)
-        self.cdu.wait_for_page(1.0)  # Extra settle time for page transition
+        self.cdu.press_lsk("L", origin_lsk)
+        self.cdu.wait_for_page(1.0)
         self._check_stop()
 
         dep_title = self.cdu.read_line(0)
@@ -599,9 +656,30 @@ class FMSProgrammer:
         self.cdu.press_key("DEP_ARR")
         self.cdu.wait_for_page()
 
-        # Select ARR for destination (LSK 2R — row 1 is origin, row 2 is dest)
+        # Re-read DEP/ARR INDEX to find destination row
+        index_lines2 = self.cdu.read_screen()
+        dest_lsk2 = dest_lsk  # use previously determined row
+        origin_lsk2 = origin_lsk
+        o_found = False
+        d_found = False
+        for i, line in enumerate(index_lines2):
+            if i < 1:
+                continue
+            line_upper = line.upper().strip() if line else ""
+            lsk = (i + 1) // 2
+            if lsk < 1 or lsk > 6:
+                continue
+            if not o_found and d.origin and d.origin in line_upper:
+                origin_lsk2 = lsk
+                o_found = True
+            if not d_found and d.destination and d.destination in line_upper:
+                dest_lsk2 = lsk
+                d_found = True
+        if origin_lsk2 == dest_lsk2:
+            dest_lsk2 = origin_lsk2 + 1
+        self._log_msg(f"Selecting ARR for {d.destination} at LSK {dest_lsk2}R")
         self.cdu.clear_scratchpad()
-        self.cdu.press_lsk("R", 2)
+        self.cdu.press_lsk("R", dest_lsk2)
         self.cdu.wait_for_page(1.0)
         self._check_stop()
 
@@ -675,8 +753,8 @@ class FMSProgrammer:
                 for variant in variants:
                     if variant in line_upper:
                         # Determine which LSK corresponds to this line
-                        # Lines 0-1 -> LSK 1, 2-3 -> LSK 2, etc.
-                        lsk_row = (line_idx // 2) + 1
+                        # Line 0 = title, lines 1+2 -> LSK 1, 3+4 -> LSK 2, etc.
+                        lsk_row = (line_idx + 1) // 2
                         if lsk_row > 6:
                             continue
                         # Determine side based on position in line
