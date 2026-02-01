@@ -754,8 +754,26 @@ class ChecklistRunner:
         self._thread.start()
         self._log.append("Auto-run started")
 
+    def _ensure_connected(self, timeout: float = 30.0) -> bool:
+        """Wait for ExtPlane client to connect, retrying if needed."""
+        start = time.time()
+        while time.time() - start < timeout:
+            if self._stop_event.is_set():
+                return False
+            if self.client.is_connected:
+                return True
+            if not self.client.is_connected:
+                self.client.connect()
+            time.sleep(1.0)
+        return self.client.is_connected
+
     def _run_loop(self):
         """Background thread: process items until done, paused, or stopped."""
+        if not self._ensure_connected():
+            self._log.append("ExtPlane not connected — aborting checklist")
+            self.state = RunnerState.IDLE
+            return
+
         while not self._stop_event.is_set():
             # Wait if paused
             self._pause_event.wait(timeout=1.0)
@@ -862,6 +880,11 @@ class ChecklistRunner:
         """Process the current item. May block while polling conditions."""
         if self.state not in (RunnerState.RUNNING,):
             return {"action": "none", "reason": f"Runner is {self.state.value}"}
+
+        # Ensure ExtPlane is connected before processing any item
+        if not self.client.is_connected:
+            if not self._ensure_connected(timeout=10.0):
+                return {"action": "error", "reason": "ExtPlane not connected"}
 
         if not self.current_checklist:
             return {"action": "none", "reason": "No checklist loaded"}
