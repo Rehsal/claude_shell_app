@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FMS Programmer</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #fff;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .top-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 20px;
+            background: #0f3460;
+            border-bottom: 1px solid #374151;
+            flex-shrink: 0;
+        }
+
+        .top-bar h1 { font-size: 1.1rem; color: #e94560; margin-right: 8px; }
+        .spacer { flex: 1; }
+
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #f87171;
+            display: inline-block;
+        }
+        .status-dot.connected { background: #4ade80; }
+
+        .conn-text { color: #94a3b8; font-size: 0.8rem; }
+        .conn-text.connected { color: #4ade80; }
+
+        .runner-badge {
+            font-size: 0.8rem; font-weight: 600;
+            padding: 3px 10px; border-radius: 4px;
+        }
+        .runner-badge.idle { color: #94a3b8; background: #374151; }
+        .runner-badge.running { color: #4ade80; background: rgba(74,222,128,0.15); }
+        .runner-badge.completed { color: #4ade80; background: rgba(74,222,128,0.2); }
+        .runner-badge.error { color: #f87171; background: rgba(248,113,113,0.15); }
+        .runner-badge.stopped { color: #fbbf24; background: rgba(251,191,36,0.15); }
+
+        .btn {
+            padding: 6px 14px; border: none; border-radius: 5px;
+            cursor: pointer; font-size: 0.8rem; font-weight: 500; color: white;
+        }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-primary { background: #e94560; }
+        .btn-primary:hover:not(:disabled) { background: #ff6b6b; }
+        .btn-secondary { background: #374151; }
+        .btn-secondary:hover:not(:disabled) { background: #4b5563; }
+        .btn-success { background: #10b981; }
+        .btn-success:hover:not(:disabled) { background: #34d399; }
+        .btn-danger { background: #ef4444; }
+        .btn-danger:hover:not(:disabled) { background: #f87171; }
+
+        .main-content {
+            display: flex; flex: 1; overflow: hidden;
+        }
+
+        /* Left Panel */
+        .left-panel {
+            width: 380px; min-width: 320px;
+            display: flex; flex-direction: column;
+            border-right: 1px solid #374151;
+            background: #16213e;
+        }
+
+        .panel-section {
+            padding: 12px 16px;
+            border-bottom: 1px solid #374151;
+        }
+        .panel-section h3 {
+            font-size: 0.85rem; color: #94a3b8;
+            margin-bottom: 8px; text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .fetch-row {
+            display: flex; gap: 8px;
+        }
+        .fetch-row input {
+            flex: 1; padding: 6px 10px;
+            background: #1a1a2e; border: 1px solid #374151;
+            border-radius: 4px; color: #fff; font-size: 0.85rem;
+        }
+
+        .ofp-summary {
+            font-size: 0.8rem; line-height: 1.6;
+            color: #d1d5db;
+        }
+        .ofp-summary .label { color: #94a3b8; }
+        .ofp-summary .value { color: #4ade80; font-weight: 500; }
+        .ofp-summary .route-str {
+            color: #94a3b8; font-size: 0.75rem;
+            word-break: break-all; margin-top: 4px;
+        }
+
+        .page-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+        }
+        .page-buttons .btn { font-size: 0.75rem; padding: 8px 6px; }
+        .btn-program-all {
+            grid-column: 1 / -1;
+            background: #10b981 !important;
+            font-size: 0.85rem !important;
+            padding: 10px !important;
+        }
+
+        .progress-bar {
+            height: 4px; background: #374151;
+            border-radius: 2px; margin-top: 8px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%; background: #4ade80;
+            transition: width 0.3s;
+            width: 0%;
+        }
+
+        /* Right Panel */
+        .right-panel {
+            flex: 1; display: flex; flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* CDU Display */
+        .cdu-container {
+            padding: 16px;
+            display: flex; justify-content: center;
+            flex-shrink: 0;
+        }
+        .cdu-screen {
+            background: #000;
+            border: 2px solid #374151;
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #00ff00;
+            min-height: 260px;
+            width: 420px;
+            white-space: pre;
+        }
+        .cdu-screen .scratchpad {
+            border-top: 1px solid #333;
+            padding-top: 4px;
+            margin-top: 4px;
+            color: #ffffff;
+        }
+
+        /* Log Panel */
+        .log-panel {
+            flex: 1; overflow-y: auto;
+            padding: 12px 16px;
+            border-top: 1px solid #374151;
+            background: #111827;
+        }
+        .log-panel h3 {
+            font-size: 0.8rem; color: #94a3b8;
+            margin-bottom: 8px; text-transform: uppercase;
+        }
+        .log-entry {
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: #9ca3af;
+            line-height: 1.5;
+        }
+        .log-entry.section { color: #4ade80; font-weight: 600; }
+        .log-entry.error { color: #f87171; }
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        <h1>FMS Programmer</h1>
+        <span class="status-dot" id="connDot"></span>
+        <span class="conn-text" id="connText">Disconnected</span>
+        <span class="spacer"></span>
+        <span class="runner-badge idle" id="stateBadge">IDLE</span>
+        <a href="/checklist" class="btn btn-secondary" style="text-decoration:none">Checklist</a>
+    </div>
+
+    <div class="main-content">
+        <div class="left-panel">
+            <!-- SimBrief Fetch -->
+            <div class="panel-section">
+                <h3>SimBrief OFP</h3>
+                <div class="fetch-row">
+                    <input type="text" id="pilotId" placeholder="Pilot ID">
+                    <button class="btn btn-primary" id="fetchBtn" onclick="fetchSimbrief()">Fetch</button>
+                </div>
+                <div class="ofp-summary" id="ofpSummary" style="margin-top:10px; display:none;"></div>
+            </div>
+
+            <!-- Page Buttons -->
+            <div class="panel-section">
+                <h3>Program Pages</h3>
+                <div class="page-buttons">
+                    <button class="btn btn-secondary" onclick="programPage('init_ref')" id="btn_init_ref">INIT REF</button>
+                    <button class="btn btn-secondary" onclick="programPage('route')" id="btn_route">ROUTE</button>
+                    <button class="btn btn-secondary" onclick="programPage('dep_arr')" id="btn_dep_arr">DEP/ARR</button>
+                    <button class="btn btn-secondary" onclick="programPage('perf_init')" id="btn_perf_init">PERF INIT</button>
+                    <button class="btn btn-secondary" onclick="programPage('n1_limit')" id="btn_n1_limit">N1 LIMIT</button>
+                    <button class="btn btn-secondary" onclick="programPage('takeoff_ref')" id="btn_takeoff_ref">TAKEOFF REF</button>
+                    <button class="btn btn-secondary" onclick="programPage('vnav')" id="btn_vnav">VNAV</button>
+                    <button class="btn btn-program-all" onclick="programAll()" id="btnProgramAll">Program All</button>
+                </div>
+                <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+            </div>
+
+            <!-- Stop -->
+            <div class="panel-section">
+                <button class="btn btn-danger" onclick="stopProgramming()" style="width:100%">Stop</button>
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <!-- CDU Screen -->
+            <div class="cdu-container">
+                <div class="cdu-screen" id="cduScreen">
+                    CDU not connected
+                </div>
+            </div>
+
+            <!-- Log -->
+            <div class="log-panel" id="logPanel">
+                <h3>Log</h3>
+                <div id="logContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let statusTimer = null;
+        let screenTimer = null;
+        let isRunning = false;
+        let lastLogLen = 0;
+
+        // Load saved pilot ID
+        const savedPid = localStorage.getItem('fms_pilot_id') || '';
+        document.getElementById('pilotId').value = savedPid;
+
+        // Check for cached data on load
+        checkCachedData();
+
+        // Start polling
+        startPolling();
+
+        async function fetchSimbrief() {
+            const pid = document.getElementById('pilotId').value.trim();
+            if (!pid) return alert('Enter a SimBrief Pilot ID');
+            localStorage.setItem('fms_pilot_id', pid);
+
+            const btn = document.getElementById('fetchBtn');
+            btn.disabled = true;
+            btn.textContent = 'Loading...';
+
+            try {
+                const body = new URLSearchParams({ pilot_id: pid });
+                const resp = await fetch('/api/fms/simbrief/fetch', { method: 'POST', body });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || 'Fetch failed');
+                showOFP(data);
+            } catch (e) {
+                alert('SimBrief error: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Fetch';
+            }
+        }
+
+        async function checkCachedData() {
+            try {
+                const resp = await fetch('/api/fms/simbrief/data');
+                const data = await resp.json();
+                if (data.status === 'ok') showOFP(data);
+            } catch (e) {}
+        }
+
+        function showOFP(d) {
+            const el = document.getElementById('ofpSummary');
+            el.style.display = 'block';
+            el.innerHTML = `
+                <div><span class="label">Route:</span> <span class="value">${d.origin} → ${d.destination}</span></div>
+                <div><span class="label">Flight:</span> <span class="value">${d.flight_number || 'N/A'}</span></div>
+                <div><span class="label">FL:</span> <span class="value">${Math.round((d.cruise_altitude||0)/100)}</span>
+                     <span class="label" style="margin-left:12px">CI:</span> <span class="value">${d.cost_index}</span></div>
+                <div><span class="label">ZFW:</span> <span class="value">${d.zfw?.toLocaleString() || '?'}</span>
+                     <span class="label" style="margin-left:12px">Fuel:</span> <span class="value">${d.fuel_block?.toLocaleString() || '?'}</span></div>
+                <div><span class="label">PAX:</span> <span class="value">${d.pax_count || '?'}</span>
+                     <span class="label" style="margin-left:12px">Flaps:</span> <span class="value">${d.flap_setting || '?'}</span></div>
+                ${d.v1 ? `<div><span class="label">V1:</span> <span class="value">${d.v1}</span>
+                     <span class="label" style="margin-left:8px">VR:</span> <span class="value">${d.vr}</span>
+                     <span class="label" style="margin-left:8px">V2:</span> <span class="value">${d.v2}</span></div>` : ''}
+                ${d.sid ? `<div><span class="label">SID:</span> <span class="value">${d.sid}</span></div>` : ''}
+                ${d.star ? `<div><span class="label">STAR:</span> <span class="value">${d.star}</span></div>` : ''}
+                <div><span class="label">Waypoints:</span> <span class="value">${d.navlog_count || 0}</span></div>
+                ${d.route ? `<div class="route-str">${d.route}</div>` : ''}
+            `;
+        }
+
+        async function programAll() {
+            try {
+                const resp = await fetch('/api/fms/program', { method: 'POST' });
+                const data = await resp.json();
+                if (!resp.ok) alert(data.detail || 'Start failed');
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function programPage(page) {
+            try {
+                const resp = await fetch(`/api/fms/program/${page}`, { method: 'POST' });
+                const data = await resp.json();
+                if (!resp.ok) alert(data.detail || 'Start failed');
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function stopProgramming() {
+            try {
+                await fetch('/api/fms/stop', { method: 'POST' });
+            } catch (e) {}
+        }
+
+        function startPolling() {
+            statusTimer = setInterval(pollStatus, 1000);
+            screenTimer = setInterval(pollScreen, 500);
+        }
+
+        async function pollStatus() {
+            try {
+                const resp = await fetch('/api/fms/status');
+                const s = await resp.json();
+                updateStatus(s);
+            } catch (e) {}
+        }
+
+        function updateStatus(s) {
+            const badge = document.getElementById('stateBadge');
+            badge.textContent = s.state.toUpperCase();
+            badge.className = 'runner-badge ' + s.state;
+
+            document.getElementById('progressFill').style.width = s.progress + '%';
+
+            isRunning = s.state === 'running';
+
+            // Update log
+            const logEl = document.getElementById('logContent');
+            if (s.log && s.log.length !== lastLogLen) {
+                lastLogLen = s.log.length;
+                logEl.innerHTML = s.log.map(l => {
+                    let cls = 'log-entry';
+                    if (l.startsWith('---')) cls += ' section';
+                    if (l.toLowerCase().includes('error')) cls += ' error';
+                    return `<div class="${cls}">${escHtml(l)}</div>`;
+                }).join('');
+                // Auto-scroll
+                const panel = document.getElementById('logPanel');
+                panel.scrollTop = panel.scrollHeight;
+            }
+        }
+
+        async function pollScreen() {
+            try {
+                const resp = await fetch('/api/fms/cdu/screen');
+                const s = await resp.json();
+                updateCDU(s);
+            } catch (e) {}
+        }
+
+        function updateCDU(s) {
+            const dot = document.getElementById('connDot');
+            const txt = document.getElementById('connText');
+            dot.className = 'status-dot' + (s.connected ? ' connected' : '');
+            txt.className = 'conn-text' + (s.connected ? ' connected' : '');
+            txt.textContent = s.connected ? 'Connected' : 'Disconnected';
+
+            if (!s.connected || !s.lines) {
+                document.getElementById('cduScreen').textContent = 'CDU not connected';
+                return;
+            }
+
+            let html = s.lines.map(l => escHtml(l || '')).join('\n');
+            if (s.scratchpad) {
+                html += `\n<span class="scratchpad">${escHtml(s.scratchpad)}</span>`;
+            }
+            document.getElementById('cduScreen').innerHTML = html;
+        }
+
+        function escHtml(t) {
+            return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
+    </script>
+</body>
+</html>

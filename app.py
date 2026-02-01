@@ -23,6 +23,7 @@ from src.xplane import XPlaneConfig, CommandsLoader, ChecklistRunner
 from src.xplane.command_categories import categorize_commands
 from src.xplane.extplane_client import get_client, ExtPlaneClient
 from src.xplane.script_executor import ScriptExecutor
+from src.xplane.fms_programmer import FMSProgrammer
 
 load_dotenv()
 
@@ -1247,6 +1248,170 @@ async def checklist_status():
     """Get current checklist state."""
     runner = get_checklist_runner()
     return runner.get_status()
+
+
+# =============================================================================
+# FMS Programmer API Endpoints
+# =============================================================================
+
+_fms_programmer: Optional[FMSProgrammer] = None
+
+
+def get_fms_programmer() -> FMSProgrammer:
+    """Get or create the global FMSProgrammer."""
+    global _fms_programmer
+    if _fms_programmer is None:
+        client = get_client()
+        _fms_programmer = FMSProgrammer(
+            client,
+            keypress_delay=xplane_config.fms_keypress_delay,
+            page_delay=xplane_config.fms_page_delay,
+            verify_retries=xplane_config.fms_verify_retries,
+        )
+    return _fms_programmer
+
+
+@app.get("/fms", response_class=HTMLResponse)
+async def fms_page():
+    """Serve the FMS Programmer UI."""
+    with open("templates/fms.html", "r", encoding="utf-8") as f:
+        html = f.read()
+    html = html.replace("</head>", f'<meta name="server-version" content="{SERVER_VERSION}"></head>', 1)
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
+@app.post("/api/fms/simbrief/fetch")
+async def fms_simbrief_fetch(pilot_id: str = Form("")):
+    """Fetch SimBrief OFP."""
+    fms = get_fms_programmer()
+    pid = pilot_id or xplane_config.simbrief_pilot_id
+    if not pid:
+        raise HTTPException(status_code=400, detail="No SimBrief pilot ID provided")
+    try:
+        data = fms.fetch_simbrief(pid)
+        # Save pilot ID to config for next time
+        if pilot_id and pilot_id != xplane_config.simbrief_pilot_id:
+            xplane_config.simbrief_pilot_id = pilot_id
+            xplane_config.save()
+        return {
+            "status": "ok",
+            "origin": data.origin,
+            "destination": data.destination,
+            "route": data.route,
+            "flight_number": data.flight_number,
+            "cruise_altitude": data.cruise_altitude,
+            "cost_index": data.cost_index,
+            "zfw": data.zfw,
+            "fuel_block": data.fuel_block,
+            "pax_count": data.pax_count,
+            "sid": data.sid,
+            "star": data.star,
+            "flap_setting": data.flap_setting,
+            "v1": data.v1,
+            "vr": data.vr,
+            "v2": data.v2,
+            "trim": data.trim,
+            "assumed_temp": data.assumed_temp,
+            "navlog_count": len(data.navlog),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/fms/simbrief/data")
+async def fms_simbrief_data():
+    """Return cached SimBrief data."""
+    fms = get_fms_programmer()
+    data = fms.simbrief_data
+    if not data:
+        return {"status": "no_data"}
+    return {
+        "status": "ok",
+        "origin": data.origin,
+        "destination": data.destination,
+        "route": data.route,
+        "flight_number": data.flight_number,
+        "cruise_altitude": data.cruise_altitude,
+        "cost_index": data.cost_index,
+        "zfw": data.zfw,
+        "fuel_block": data.fuel_block,
+        "fuel_taxi": data.fuel_taxi,
+        "fuel_trip": data.fuel_trip,
+        "fuel_reserve": data.fuel_reserve,
+        "pax_count": data.pax_count,
+        "cargo": data.cargo,
+        "estimated_tow": data.estimated_tow,
+        "sid": data.sid,
+        "star": data.star,
+        "origin_runway": data.origin_runway,
+        "dest_runway": data.dest_runway,
+        "flap_setting": data.flap_setting,
+        "v1": data.v1,
+        "vr": data.vr,
+        "v2": data.v2,
+        "trim": data.trim,
+        "assumed_temp": data.assumed_temp,
+        "trans_alt": data.trans_alt,
+        "trans_level": data.trans_level,
+        "navlog_count": len(data.navlog),
+        "navlog": [
+            {"ident": w.ident, "airway": w.airway, "altitude": w.altitude, "type": w.type}
+            for w in data.navlog[:50]
+        ],
+    }
+
+
+@app.post("/api/fms/program")
+async def fms_program():
+    """Start full FMS programming sequence in background."""
+    fms = get_fms_programmer()
+    # Ensure ExtPlane connected
+    client = get_client()
+    if not client.is_connected:
+        client.connect()
+    fms.client = client
+    try:
+        fms.program_all()
+        return {"status": "ok", "message": "Programming started"}
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/fms/program/{page}")
+async def fms_program_page(page: str):
+    """Program a single FMS page in background."""
+    fms = get_fms_programmer()
+    client = get_client()
+    if not client.is_connected:
+        client.connect()
+    fms.client = client
+    try:
+        fms.program_page(page)
+        return {"status": "ok", "page": page}
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/fms/stop")
+async def fms_stop():
+    """Stop FMS programming."""
+    fms = get_fms_programmer()
+    fms.stop()
+    return {"status": "ok"}
+
+
+@app.get("/api/fms/status")
+async def fms_status():
+    """Get FMS programmer status."""
+    fms = get_fms_programmer()
+    return fms.get_status()
+
+
+@app.get("/api/fms/cdu/screen")
+async def fms_cdu_screen():
+    """Read current CDU screen."""
+    fms = get_fms_programmer()
+    return fms.read_cdu_screen()
 
 
 if __name__ == "__main__":

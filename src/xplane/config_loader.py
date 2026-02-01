@@ -120,6 +120,32 @@ class XPlaneConfig:
         return self._config.get("xplane", {}).get("extplane", {}).get("port", 51000)
 
     @property
+    def simbrief_pilot_id(self) -> str:
+        """Get SimBrief pilot ID."""
+        return self._config.get("xplane", {}).get("fms", {}).get("simbrief_pilot_id", "")
+
+    @simbrief_pilot_id.setter
+    def simbrief_pilot_id(self, value: str) -> None:
+        self._config.setdefault("xplane", {}).setdefault("fms", {})["simbrief_pilot_id"] = value
+
+    @property
+    def fms_keypress_delay(self) -> float:
+        """Get FMS keypress delay in seconds."""
+        ms = self._config.get("xplane", {}).get("fms", {}).get("keypress_delay_ms", 80)
+        return ms / 1000.0
+
+    @property
+    def fms_page_delay(self) -> float:
+        """Get FMS page settle delay in seconds."""
+        ms = self._config.get("xplane", {}).get("fms", {}).get("page_settle_delay_ms", 500)
+        return ms / 1000.0
+
+    @property
+    def fms_verify_retries(self) -> int:
+        """Get FMS verify retry count."""
+        return self._config.get("xplane", {}).get("fms", {}).get("verify_retries", 2)
+
+    @property
     def active_profile(self) -> str:
         """Get currently active aircraft profile name."""
         return self._config.get("active_profile", "X-Plane")

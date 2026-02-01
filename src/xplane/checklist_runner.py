@@ -1377,6 +1377,24 @@ class ChecklistRunner:
         if not part:
             return None
 
+        if part.startswith("fms:"):
+            # FMS programmer integration: fms:program_all, fms:route, etc.
+            from .fms_programmer import FMSProgrammer
+            fms_page = part[4:].strip()
+            # Get or create FMS programmer (reuses the global instance via app.py)
+            # For checklist context, we create a local one if needed
+            if not hasattr(self, '_fms_programmer') or self._fms_programmer is None:
+                self._fms_programmer = FMSProgrammer(self.client)
+            fms = self._fms_programmer
+            self._log.append(f"FMS: {fms_page}")
+            success = fms.run_sync(fms_page)
+            return {
+                "command": part,
+                "commands_sent": [f"fms:{fms_page}"],
+                "datarefs_set": [],
+                "errors": [] if success else [f"FMS {fms_page} failed"],
+            }
+
         if part.startswith("set:"):
             # Direct dataref write: set:dataref=value
             try:
