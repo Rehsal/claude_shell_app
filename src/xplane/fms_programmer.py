@@ -142,13 +142,17 @@ class CDUInterface:
         time.sleep(self.page_delay)
 
     def clear_scratchpad(self):
-        """Clear the scratchpad fully. May need multiple CLR presses."""
-        for _ in range(5):
+        """Clear the scratchpad fully.
+
+        On the Zibo 737, CLR deletes one character at a time (backspace),
+        so long scratchpad content needs many presses.
+        """
+        for _ in range(30):
             sp = self.read_scratchpad()
             if not sp or not sp.strip():
                 return
             self.press_key("CLR")
-            time.sleep(0.15)
+            time.sleep(0.1)
 
     def read_screen(self) -> List[str]:
         """Read all 14 FMC screen lines."""
@@ -395,59 +399,43 @@ class FMSProgrammer:
     # ------------------------------------------------------------------
 
     def program_init_ref(self):
-        """Program INIT REF page: cost index, cruise alt, ZFW, reserves."""
+        """Program PERF INIT page via N1 LIMIT -> LSK 6L.
+
+        Zibo PERF INIT layout (confirmed by testing):
+          LSK 1L: GW/CG%       LSK 1R: CRZ ALT
+          LSK 2L: fuel density  LSK 2R: fuel reserves
+          LSK 3L: ZFW           LSK 3R: ISA DEV / OAT
+          LSK 4L: reserves      LSK 4R: TRANS ALT
+          LSK 5L: data          LSK 5R: REQUEST
+          LSK 6L: INDEX         LSK 6R: N1 LIMIT
+
+        Note: ZFW/GW may require EFB loading on the Zibo. Weight entries
+        via CDU may give INVALID ENTRY if weights aren't loaded via EFB first.
+        """
         d = self._data
         self._check_stop()
 
-        # Clear any stale scratchpad data before navigating
+        # Navigate to PERF INIT: N1 LIMIT -> LSK 6L
         self.cdu.clear_scratchpad()
-        self.cdu.press_key("INIT_REF")
+        self.cdu.press_key("N1_LIMIT")
+        self.cdu.wait_for_page()
+        self.cdu.press_lsk("L", 6)
         self.cdu.wait_for_page()
 
-        # Verify we're on IDENT page (first page of INIT REF)
-        title_line = self.cdu.read_line(0)
-        self._log_msg(f"INIT REF title: {title_line}")
-
-        # Go to PERF INIT (page 2 from INIT REF -> POS INIT -> PERF INIT)
-        # Actually for Zibo: INIT REF -> IDENT page. Next page -> POS INIT. Next -> PERF INIT.
-        self.cdu.press_key("NEXT_PAGE")
-        self.cdu.wait_for_page()
-        self._check_stop()
-
-        # Check if we're on POS INIT
-        self.cdu.press_key("NEXT_PAGE")
-        self.cdu.wait_for_page()
-        self._check_stop()
-
-        # Now on PERF INIT
         title = self.cdu.read_line(0)
         self._log_msg(f"PERF INIT title: {title}")
 
-        # Cost Index -> LSK 1R
-        if d.cost_index:
-            self._log_msg(f"Entering cost index: {d.cost_index}")
-            self.cdu.enter_value_at_lsk(str(d.cost_index), "R", 1)
-            self._check_stop()
-
-        # Cruise Altitude -> LSK 2R
+        # CRZ ALT -> LSK 1R
         if d.cruise_altitude:
             alt_str = f"FL{d.cruise_altitude // 100}" if d.cruise_altitude >= 18000 else str(d.cruise_altitude)
             self._log_msg(f"Entering cruise alt: {alt_str}")
-            self.cdu.enter_value_at_lsk(alt_str, "R", 2)
+            self.cdu.enter_value_at_lsk(alt_str, "R", 1)
             self._check_stop()
 
-        # ZFW -> LSK 3R (in thousands: e.g. 128.5 for 128500 lbs)
-        if d.zfw:
-            zfw_str = f"{d.zfw / 1000:.1f}"
-            self._log_msg(f"Entering ZFW: {zfw_str}")
-            self.cdu.enter_value_at_lsk(zfw_str, "L", 3)
-            self._check_stop()
-
-        # Reserves -> LSK 4R
-        if d.fuel_reserve:
-            res_str = f"{d.fuel_reserve / 1000:.1f}"
-            self._log_msg(f"Entering reserves: {res_str}")
-            self.cdu.enter_value_at_lsk(res_str, "L", 4)
+        # TRANS ALT -> LSK 4R
+        if d.trans_alt:
+            self._log_msg(f"Entering transition alt: {d.trans_alt}")
+            self.cdu.enter_value_at_lsk(str(d.trans_alt), "R", 4)
             self._check_stop()
 
         # EXEC if light is on
@@ -779,47 +767,9 @@ class FMSProgrammer:
     # ------------------------------------------------------------------
 
     def program_perf_init(self):
-        """Program PERF INIT: cost index, cruise alt, fuel, trans alt."""
-        d = self._data
+        """PERF INIT already handled in program_init_ref. Verify page state."""
         self._check_stop()
-
-        self.cdu.clear_scratchpad()
-        self.cdu.press_key("INIT_REF")
-        self.cdu.wait_for_page()
-        self.cdu.press_key("NEXT_PAGE")
-        self.cdu.wait_for_page()
-        self.cdu.press_key("NEXT_PAGE")
-        self.cdu.wait_for_page()
-
-        title = self.cdu.read_line(0)
-        self._log_msg(f"PERF INIT title: {title}")
-
-        # Cost Index -> LSK 1R (if not already set)
-        if d.cost_index:
-            self.cdu.enter_value_at_lsk(str(d.cost_index), "R", 1)
-            self._check_stop()
-
-        # Cruise Alt -> LSK 2R
-        if d.cruise_altitude:
-            alt_str = f"FL{d.cruise_altitude // 100}" if d.cruise_altitude >= 18000 else str(d.cruise_altitude)
-            self.cdu.enter_value_at_lsk(alt_str, "R", 2)
-            self._check_stop()
-
-        # Fuel (block fuel) -> LSK 3R (in thousands)
-        if d.fuel_block:
-            fuel_str = f"{d.fuel_block / 1000:.1f}"
-            self._log_msg(f"Entering block fuel: {fuel_str}")
-            self.cdu.enter_value_at_lsk(fuel_str, "R", 3)
-            self._check_stop()
-
-        # Transition altitude -> LSK 5L
-        if d.trans_alt:
-            self._log_msg(f"Entering transition alt: {d.trans_alt}")
-            self.cdu.enter_value_at_lsk(str(d.trans_alt), "L", 5)
-            self._check_stop()
-
-        self.cdu.press_exec()
-        self._log_msg("PERF INIT complete")
+        self._log_msg("PERF INIT already entered in INIT REF step, skipping")
 
     # ------------------------------------------------------------------
     # Page: N1 LIMIT
@@ -854,34 +804,66 @@ class FMSProgrammer:
         d = self._data
         self._check_stop()
 
+        # Navigate to TAKEOFF REF: N1 LIMIT -> LSK 6R (TAKEOFF)
         self.cdu.clear_scratchpad()
-        self.cdu.press_key("INIT_REF")
+        self.cdu.press_key("N1_LIMIT")
         self.cdu.wait_for_page()
-        # Page through to TAKEOFF REF (usually 4th or 5th page in INIT REF)
-        for _ in range(4):
-            self.cdu.press_key("NEXT_PAGE")
-            self.cdu.wait_for_page()
-            self._check_stop()
+        self.cdu.press_lsk("R", 6)
+        self.cdu.wait_for_page()
+
+        found = False
+        title = self.cdu.read_line(0)
+        if title and "TAKEOFF" in title.upper():
+            found = True
 
         title = self.cdu.read_line(0)
         self._log_msg(f"TAKEOFF REF title: {title}")
 
-        # Flap setting -> LSK 1L
-        if d.flap_setting:
-            self._log_msg(f"Entering flap setting: {d.flap_setting}")
-            self.cdu.enter_value_at_lsk(str(d.flap_setting), "L", 1)
-            self._check_stop()
+        if not found:
+            self._log_msg("Could not find TAKEOFF REF page, skipping")
+            return
+
+        # Flap setting -> LSK 1L (default to 5 for 737 if not provided)
+        flap = d.flap_setting if d.flap_setting else "5"
+        self._log_msg(f"Entering flap setting: {flap}")
+        self.cdu.enter_value_at_lsk(flap, "L", 1)
+        self.cdu.wait_for_page()
+        self._check_stop()
 
         # CG/Trim -> LSK 2L
         if d.trim:
             self._log_msg(f"Entering trim: {d.trim}")
             self.cdu.enter_value_at_lsk(str(d.trim), "L", 2)
+            self.cdu.wait_for_page()
             self._check_stop()
 
-        # Read V-speeds to verify they auto-populated
-        time.sleep(1.0)
+        # Wait for V-speeds to calculate then read them
+        # Layout: line 1 right=V1, line 2 right=VR, line 3 right=V2
+        time.sleep(1.5)
         screen = self.cdu.read_screen()
-        self._log_msg(f"V-speed lines: {screen[6:10]}")
+
+        # Log all content lines for debugging
+        non_empty = [(i, l.strip()) for i, l in enumerate(screen) if l and l.strip()]
+        for idx, txt in non_empty:
+            self._log_msg(f"  TKREF [{idx}] {txt}")
+
+        # Extract V-speeds from the right side of lines 1, 2, 3
+        def extract_right_number(line):
+            if not line:
+                return ""
+            # Right side of CDU line — look for numbers in the right half
+            right_half = line[len(line)//2:]
+            nums = re.findall(r'\d{2,3}', right_half)
+            return nums[-1] if nums else ""
+
+        v1 = extract_right_number(screen[1] if len(screen) > 1 else "")
+        v_r = extract_right_number(screen[2] if len(screen) > 2 else "")
+        v2 = extract_right_number(screen[3] if len(screen) > 3 else "")
+
+        if v1 or v_r or v2:
+            self._log_msg(f"V-speeds: V1={v1} VR={v_r} V2={v2}")
+        else:
+            self._log_msg("V-speeds not calculated (check CG/weight entry)")
 
         # EXEC
         self.cdu.press_exec()
