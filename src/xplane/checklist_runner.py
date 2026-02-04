@@ -609,6 +609,9 @@ class ChecklistRunner:
         self._current_section: str = ""
         self._progress_total: int = 0  # items processed across all sub-checklists
 
+        # Completion tracking — track which checklists have been completed
+        self._completed_checklists: set = set()
+
         # Threading
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -649,11 +652,51 @@ class ChecklistRunner:
         self._history = []
         self._current_section = ""
         self._progress_total = 0
+        self._completed_checklists.clear()
         return [cl.name for cl in self.checklists]
 
     def list_checklists(self) -> List[Dict]:
         return [{"name": cl.name, "item_count": len(cl.items)}
                 for cl in self.checklists]
+
+    def mark_completed(self, name: str) -> None:
+        """Mark a checklist as completed."""
+        self._completed_checklists.add(name)
+
+    def clear_completed(self) -> None:
+        """Reset all completion states."""
+        self._completed_checklists.clear()
+
+    def get_completed(self) -> List[str]:
+        """Return list of completed checklist names."""
+        return list(self._completed_checklists)
+
+    def run_series(self, start_name: str) -> bool:
+        """Run from start_name through all remaining checklists in sequence."""
+        # Find the starting checklist index
+        start_idx = -1
+        for i, cl in enumerate(self.checklists):
+            if cl.name == start_name:
+                start_idx = i
+                break
+        if start_idx == -1:
+            return False
+
+        self.stop()
+        self._history = []
+        self._progress_total = 0
+        self._current_section = ""
+        self._log = []
+
+        # Start from the specified checklist
+        cl = self.checklists[start_idx]
+        self.current_checklist = cl
+        self.current_index = 0
+        self._current_section = cl.name
+        self.state = RunnerState.RUNNING
+        self._log.append(f"Running series from: {start_name}")
+        self._start_background()
+        return True
 
     def start(self, checklist_name: str, auto_run: bool = False) -> bool:
         """Start a checklist. If auto_run=True, begins executing in background."""
@@ -821,7 +864,8 @@ class ChecklistRunner:
             "continue_target": item.continue_target if item.item_type == ItemType.SW_CONTINUE else "",
         }
         if self.speech_enabled and item.speak_on and item.speak:
-            entry["speak"] = item.speak
+            # Replace underscores with spaces for natural speech
+            entry["speak"] = item.speak.replace('_', ' ')
         self._history.append(entry)
         self._progress_total += 1
         # Block runner until client-side TTS signals completion
@@ -849,9 +893,11 @@ class ChecklistRunner:
             "running_in_background": self._thread is not None and self._thread.is_alive(),
             "history": list(self._history),
             "progress_total": self._progress_total,
-            "log": self._log[-100:],
+            "log": self._log[-500:],
             "auto_continue": self.auto_continue,
             "speech_enabled": self.speech_enabled,
+            "completed_checklists": list(self._completed_checklists),
+            "all_checklists": [cl.name for cl in self.checklists],
         }
         if self.current_checklist and self.current_index < len(self.current_checklist.items):
             item = self.current_checklist.items[self.current_index]
@@ -874,6 +920,8 @@ class ChecklistRunner:
     def _advance(self):
         self.current_index += 1
         if self.current_checklist and self.current_index >= len(self.current_checklist.items):
+            # Mark the checklist as completed
+            self.mark_completed(self.current_checklist.name)
             self.state = RunnerState.COMPLETED
 
     def _process_current_item(self) -> Dict:
@@ -935,16 +983,28 @@ class ChecklistRunner:
             if not item.conditions and item.command_override:
                 self._log.append(f"Command-only: {item.label}")
                 cmd_result = self._try_execute_command(item)
+                if cmd_result:
+                    self._log.append(f"  Executed: cmds={cmd_result.get('commands_sent', [])}, refs={cmd_result.get('datarefs_set', [])}, errs={cmd_result.get('errors', [])}")
+                # Apply Zibo-specific extra writes (fuel pumps, window heat, etc.)
+                self._zibo_post_command(item)
                 status = "executed" if cmd_result else "no_match"
                 self._append_history(item, status)
+                # Brief delay to let X-Plane process the command
+                time.sleep(0.5)
                 self._advance()
                 return {"action": status, "label": item.label}
             if not item.conditions:
                 # No conditions — try to execute command by label, then advance
                 self._log.append(f"No-condition: {item.label}")
                 cmd_result = self._try_execute_command(item)
+                if cmd_result:
+                    self._log.append(f"  Executed: cmds={cmd_result.get('commands_sent', [])}, refs={cmd_result.get('datarefs_set', [])}, errs={cmd_result.get('errors', [])}")
+                # Apply Zibo-specific extra writes (fuel pumps, window heat, etc.)
+                self._zibo_post_command(item)
                 status = "executed" if cmd_result else "no_match"
                 self._append_history(item, status)
+                # Brief delay to let X-Plane process the command
+                time.sleep(0.5)
                 self._advance()
                 return {"action": status, "label": item.label}
             return self._handle_dataref_item(item)
@@ -1606,36 +1666,56 @@ class ChecklistRunner:
         "IRS MODE SELECTORS": {
             "NAV": "irs_nav",
         },
-        # Fuel pumps — toggle switches, direct writes rejected
+        # Fuel pumps — direct dataref writes (same as commands.xml)
+        "FUEL PUMP": {
+            "ON": [
+                ("laminar/B738/fuel/fuel_tank_pos_lft1", 1),
+                ("laminar/B738/fuel/fuel_tank_pos_lft2", 1),
+                ("laminar/B738/fuel/fuel_tank_pos_ctr1", 1),
+                ("laminar/B738/fuel/fuel_tank_pos_ctr2", 1),
+                ("laminar/B738/fuel/fuel_tank_pos_rgt1", 1),
+                ("laminar/B738/fuel/fuel_tank_pos_rgt2", 1),
+            ],
+        },
+        "FUEL PUMPS": {
+            "ON": [
+                ("laminar/B738/fuel/fuel_tank_pos_lft1", 1),
+                ("laminar/B738/fuel/fuel_tank_pos_lft2", 1),
+                ("laminar/B738/fuel/fuel_tank_pos_ctr1", 1),
+                ("laminar/B738/fuel/fuel_tank_pos_ctr2", 1),
+                ("laminar/B738/fuel/fuel_tank_pos_rgt1", 1),
+                ("laminar/B738/fuel/fuel_tank_pos_rgt2", 1),
+            ],
+        },
         "FUEL PUMPS LEFT AND RIGHT": {
             "ON": [
-                ("cmd:laminar/B738/toggle_switch/fuel_pump_lft1", None),
-                ("cmd:laminar/B738/toggle_switch/fuel_pump_lft2", None),
-                ("cmd:laminar/B738/toggle_switch/fuel_pump_rgt1", None),
-                ("cmd:laminar/B738/toggle_switch/fuel_pump_rgt2", None),
+                ("laminar/B738/fuel/fuel_tank_pos_lft1", 1),
+                ("laminar/B738/fuel/fuel_tank_pos_lft2", 1),
+                ("laminar/B738/fuel/fuel_tank_pos_rgt1", 1),
+                ("laminar/B738/fuel/fuel_tank_pos_rgt2", 1),
             ],
         },
         "FUEL PUMPS CENTER": {
             "ON": [
-                ("cmd:laminar/B738/toggle_switch/fuel_pump_ctr1", None),
-                ("cmd:laminar/B738/toggle_switch/fuel_pump_ctr2", None),
+                ("laminar/B738/fuel/fuel_tank_pos_ctr1", 1),
+                ("laminar/B738/fuel/fuel_tank_pos_ctr2", 1),
             ],
         },
-        # Window heaters — toggle switches
+        # Window heaters — direct dataref writes (not toggles)
         "WINDOW HEATERS": {
             "ON": [
-                ("cmd:laminar/B738/toggle_switch/window_heat_l_side", None),
-                ("cmd:laminar/B738/toggle_switch/window_heat_l_fwd", None),
-                ("cmd:laminar/B738/toggle_switch/window_heat_r_fwd", None),
-                ("cmd:laminar/B738/toggle_switch/window_heat_r_side", None),
+                ("laminar/B738/ice/window_heat_l_side_pos", 1),
+                ("laminar/B738/ice/window_heat_l_fwd_pos", 1),
+                ("laminar/B738/ice/window_heat_r_fwd_pos", 1),
+                ("laminar/B738/ice/window_heat_r_side_pos", 1),
             ],
         },
         "WINDOW HEATER": {
             "ON": [
-                ("cmd:laminar/B738/toggle_switch/window_heat_l_side", None),
-                ("cmd:laminar/B738/toggle_switch/window_heat_l_fwd", None),
-                ("cmd:laminar/B738/toggle_switch/window_heat_r_fwd", None),
-                ("cmd:laminar/B738/toggle_switch/window_heat_r_side", None),
+                ("laminar/B738/ice/window_heat_l_side_pos", 1),
+                ("laminar/B738/ice/window_heat_l_fwd_pos", 1),
+                ("laminar/B738/ice/window_heat_r_fwd_pos", 1),
+                ("laminar/B738/ice/window_heat_r_side_pos", 1),
             ],
         },
         # Emergency exit lights — toggle command sequence

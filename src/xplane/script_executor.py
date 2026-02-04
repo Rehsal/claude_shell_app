@@ -32,14 +32,21 @@ class ScriptExecutor:
     # XPRemote can write these directly, but ExtPlane cannot — the set
     # succeeds silently yet X-Plane ignores it.  We convert each
     # setDataRefValue into a sendCommand toggle instead.
+    # Remap Zibo datarefs that ExtPlane writes don't stick reliably.
+    # These get converted to toggle commands with state checking.
     _DATAREF_TO_COMMAND = {
+        # Fuel pumps
+        "laminar/B738/fuel/fuel_tank_pos_lft1": "laminar/B738/toggle_switch/fuel_pump_lft1",
+        "laminar/B738/fuel/fuel_tank_pos_lft2": "laminar/B738/toggle_switch/fuel_pump_lft2",
+        "laminar/B738/fuel/fuel_tank_pos_ctr1": "laminar/B738/toggle_switch/fuel_pump_ctr1",
+        "laminar/B738/fuel/fuel_tank_pos_ctr2": "laminar/B738/toggle_switch/fuel_pump_ctr2",
+        "laminar/B738/fuel/fuel_tank_pos_rgt1": "laminar/B738/toggle_switch/fuel_pump_rgt1",
+        "laminar/B738/fuel/fuel_tank_pos_rgt2": "laminar/B738/toggle_switch/fuel_pump_rgt2",
+        # Window heat - dataref writes don't stick reliably via ExtPlane
         "laminar/B738/ice/window_heat_l_side_pos": "laminar/B738/toggle_switch/window_heat_l_side",
         "laminar/B738/ice/window_heat_l_fwd_pos": "laminar/B738/toggle_switch/window_heat_l_fwd",
         "laminar/B738/ice/window_heat_r_side_pos": "laminar/B738/toggle_switch/window_heat_r_side",
         "laminar/B738/ice/window_heat_r_fwd_pos": "laminar/B738/toggle_switch/window_heat_r_fwd",
-        "laminar/B738/ice/eng1_heat_pos": "laminar/B738/toggle_switch/eng1_heat",
-        "laminar/B738/ice/eng2_heat_pos": "laminar/B738/toggle_switch/eng2_heat",
-        "laminar/B738/ice/wing_heat_pos": "laminar/B738/toggle_switch/wing_heat",
     }
 
     def __init__(self, client: ExtPlaneClient):
@@ -399,8 +406,20 @@ class ScriptExecutor:
             # Remap read-only datarefs to toggle commands
             if dataref in self._DATAREF_TO_COMMAND:
                 command = self._DATAREF_TO_COMMAND[dataref]
+                # Check current state before toggling to avoid flipping back
+                current = self.client.get_dataref(dataref)
+                try:
+                    current_val = float(current) if current is not None else -1
+                except (TypeError, ValueError):
+                    current_val = -1
+                target_val = float(value) if value is not None else 1
+                if abs(current_val - target_val) < 0.1:
+                    # Already at desired state, skip toggle
+                    self.commands_sent.append(f"SKIP {command} (already at {current_val})")
+                    return
                 if self.client.send_command(command):
                     self.commands_sent.append(f"{command} (remapped from {dataref})")
+                    time.sleep(0.2)  # Let toggle take effect
                 return
             if self.client.set_dataref(dataref, value):
                 self.datarefs_set.append({"dataref": dataref, "value": value})

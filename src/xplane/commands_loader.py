@@ -412,7 +412,8 @@ class CommandsLoader:
             Tuple of (matched_token_names, operands_dict)
             operands_dict may contain: 'number', 'identifier', etc.
         """
-        words = input_text.lower().strip().split()
+        # Replace underscores with spaces so "FUEL_PUMP ON" matches "FUEL PUMP ON"
+        words = input_text.lower().strip().replace('_', ' ').split()
         matched_tokens = []
         operands = {}
         i = 0
