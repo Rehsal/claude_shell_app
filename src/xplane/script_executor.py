@@ -47,6 +47,11 @@ class ScriptExecutor:
         "laminar/B738/ice/window_heat_l_fwd_pos": "laminar/B738/toggle_switch/window_heat_l_fwd",
         "laminar/B738/ice/window_heat_r_side_pos": "laminar/B738/toggle_switch/window_heat_r_side",
         "laminar/B738/ice/window_heat_r_fwd_pos": "laminar/B738/toggle_switch/window_heat_r_fwd",
+        # Landing lights
+        "laminar/B738/switch/land_lights_left_pos": "laminar/B738/switch/land_lights_left_on",
+        "laminar/B738/switch/land_lights_right_pos": "laminar/B738/switch/land_lights_right_on",
+        # Chocks/wheel blocks
+        "laminar/B738/fms/chock_status": "laminar/B738/toggle_switch/chock",
     }
 
     def __init__(self, client: ExtPlaneClient):
