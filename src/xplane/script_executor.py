@@ -50,6 +50,8 @@ class ScriptExecutor:
         "laminar/B738/switch/land_lights_right_pos": ("laminar/B738/switch/land_lights_right_on", "laminar/B738/switch/land_lights_right_off"),
         # Chocks - true toggle
         "laminar/B738/fms/chock_status": "laminar/B738/toggle_switch/chock",
+        # Yaw damper - true toggle (same pattern as fuel pumps)
+        "laminar/B738/toggle_switch/yaw_dumper_pos": "laminar/B738/toggle_switch/yaw_dumper",
     }
 
     def __init__(self, client: ExtPlaneClient):
