@@ -28,29 +28,27 @@ class ScriptExecutor:
     - Comparisons: ==, !=, <, >, <=, >=, lt, gt, eq
     """
 
-    # Remap read-only Zibo datarefs to writable toggle_switch equivalents.
-    # XPRemote can write these directly, but ExtPlane cannot — the set
-    # succeeds silently yet X-Plane ignores it.  We convert each
-    # setDataRefValue into a sendCommand toggle instead.
     # Remap Zibo datarefs that ExtPlane writes don't stick reliably.
-    # These get converted to toggle commands with state checking.
+    # Values can be:
+    #   - string: toggle command (sends if current != target)
+    #   - tuple (on_cmd, off_cmd): directional commands based on target value
     _DATAREF_TO_COMMAND = {
-        # Fuel pumps
+        # Fuel pumps - true toggles
         "laminar/B738/fuel/fuel_tank_pos_lft1": "laminar/B738/toggle_switch/fuel_pump_lft1",
         "laminar/B738/fuel/fuel_tank_pos_lft2": "laminar/B738/toggle_switch/fuel_pump_lft2",
         "laminar/B738/fuel/fuel_tank_pos_ctr1": "laminar/B738/toggle_switch/fuel_pump_ctr1",
         "laminar/B738/fuel/fuel_tank_pos_ctr2": "laminar/B738/toggle_switch/fuel_pump_ctr2",
         "laminar/B738/fuel/fuel_tank_pos_rgt1": "laminar/B738/toggle_switch/fuel_pump_rgt1",
         "laminar/B738/fuel/fuel_tank_pos_rgt2": "laminar/B738/toggle_switch/fuel_pump_rgt2",
-        # Window heat - dataref writes don't stick reliably via ExtPlane
+        # Window heat - true toggles
         "laminar/B738/ice/window_heat_l_side_pos": "laminar/B738/toggle_switch/window_heat_l_side",
         "laminar/B738/ice/window_heat_l_fwd_pos": "laminar/B738/toggle_switch/window_heat_l_fwd",
         "laminar/B738/ice/window_heat_r_side_pos": "laminar/B738/toggle_switch/window_heat_r_side",
         "laminar/B738/ice/window_heat_r_fwd_pos": "laminar/B738/toggle_switch/window_heat_r_fwd",
-        # Landing lights
-        "laminar/B738/switch/land_lights_left_pos": "laminar/B738/switch/land_lights_left_on",
-        "laminar/B738/switch/land_lights_right_pos": "laminar/B738/switch/land_lights_right_on",
-        # Chocks/wheel blocks
+        # Landing lights - on/off pairs
+        "laminar/B738/switch/land_lights_left_pos": ("laminar/B738/switch/land_lights_left_on", "laminar/B738/switch/land_lights_left_off"),
+        "laminar/B738/switch/land_lights_right_pos": ("laminar/B738/switch/land_lights_right_on", "laminar/B738/switch/land_lights_right_off"),
+        # Chocks - true toggle
         "laminar/B738/fms/chock_status": "laminar/B738/toggle_switch/chock",
     }
 
@@ -408,23 +406,39 @@ class ScriptExecutor:
         if match:
             dataref = match.group(1)
             value = self._evaluate_expression(match.group(2))
-            # Remap read-only datarefs to toggle commands
+            # Remap datarefs to commands (toggle or on/off pairs)
             if dataref in self._DATAREF_TO_COMMAND:
-                command = self._DATAREF_TO_COMMAND[dataref]
-                # Check current state before toggling to avoid flipping back
+                mapping = self._DATAREF_TO_COMMAND[dataref]
                 current = self.client.get_dataref(dataref)
                 try:
                     current_val = float(current) if current is not None else -1
                 except (TypeError, ValueError):
                     current_val = -1
                 target_val = float(value) if value is not None else 1
-                if abs(current_val - target_val) < 0.1:
-                    # Already at desired state, skip toggle
-                    self.commands_sent.append(f"SKIP {command} (already at {current_val})")
-                    return
+
+                if isinstance(mapping, tuple):
+                    # ON/OFF command pair: (on_cmd, off_cmd)
+                    on_cmd, off_cmd = mapping
+                    if target_val > 0.5:
+                        if current_val > 0.5:
+                            self.commands_sent.append(f"SKIP {on_cmd} (already on)")
+                            return
+                        command = on_cmd
+                    else:
+                        if current_val < 0.5:
+                            self.commands_sent.append(f"SKIP {off_cmd} (already off)")
+                            return
+                        command = off_cmd
+                else:
+                    # Toggle command: only send if state doesn't match
+                    command = mapping
+                    if abs(current_val - target_val) < 0.1:
+                        self.commands_sent.append(f"SKIP {command} (already at {current_val})")
+                        return
+
                 if self.client.send_command(command):
                     self.commands_sent.append(f"{command} (remapped from {dataref})")
-                    time.sleep(0.2)  # Let toggle take effect
+                    time.sleep(0.2)  # Let command take effect
                 return
             if self.client.set_dataref(dataref, value):
                 self.datarefs_set.append({"dataref": dataref, "value": value})
