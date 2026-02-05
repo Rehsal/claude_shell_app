@@ -551,31 +551,77 @@ class FMSProgrammer:
     # ------------------------------------------------------------------
 
     def clear_route(self):
-        """Clear the current FMC route by deleting origin/dest on RTE page."""
+        """Clear the FMC by deleting route, waypoints, and PERF INIT data."""
         self._ensure_connected()
-        self._log_msg("Clearing FMC route...")
+        self._log_msg("Clearing FMC...")
 
         self.cdu.clear_scratchpad()
+
+        # --- RTE page 1: delete origin and destination ---
         self.cdu.press_key("RTE")
         self.cdu.wait_for_page()
+        self._log_msg("Clearing RTE page 1 (origin/dest)...")
 
-        # Press DEL key then LSK 1L (origin) to delete it
         self.cdu.press_key("DEL")
         self.cdu.press_lsk("L", 1)
         self.cdu.wait_for_page()
 
-        # Press DEL key then LSK 1R (destination) to delete it
         self.cdu.press_key("DEL")
         self.cdu.press_lsk("R", 1)
         self.cdu.wait_for_page()
 
-        # EXEC the deletion
         self.cdu.press_exec()
         self.cdu.wait_for_page()
 
-        # Clear DEP/ARR by pressing DEP_ARR and checking
+        # --- RTE page 2+: delete waypoints row by row ---
+        self._log_msg("Clearing route waypoints...")
+        self.cdu.press_key("NEXT_PAGE")
+        self.cdu.wait_for_page()
+
+        for page in range(5):  # Up to 5 pages of waypoints
+            lines = self.cdu.read_screen()
+            has_content = any(
+                lines[i].strip() for i in range(1, 14) if i < len(lines)
+            )
+            if not has_content:
+                break
+            # Delete rows 1-6 on this page
+            for row in range(1, 7):
+                self.cdu.press_key("DEL")
+                self.cdu.press_lsk("R", row)
+                time.sleep(0.15)
+                self.cdu.press_key("DEL")
+                self.cdu.press_lsk("L", row)
+                time.sleep(0.15)
+            self.cdu.press_key("NEXT_PAGE")
+            self.cdu.wait_for_page()
+
+        self.cdu.press_exec()
+        self.cdu.wait_for_page()
+
+        # --- PERF INIT: delete CRZ ALT and TRANS ALT ---
+        self._log_msg("Clearing PERF INIT...")
         self.cdu.clear_scratchpad()
-        self._log_msg("FMC route cleared")
+        self.cdu.press_key("N1_LIMIT")
+        self.cdu.wait_for_page()
+        self.cdu.press_lsk("L", 6)  # INDEX -> PERF INIT
+        self.cdu.wait_for_page()
+
+        # DEL CRZ ALT (LSK 1R)
+        self.cdu.press_key("DEL")
+        self.cdu.press_lsk("R", 1)
+        self.cdu.wait_for_page()
+
+        # DEL TRANS ALT (LSK 4R)
+        self.cdu.press_key("DEL")
+        self.cdu.press_lsk("R", 4)
+        self.cdu.wait_for_page()
+
+        self.cdu.press_exec()
+        self.cdu.wait_for_page()
+
+        self.cdu.clear_scratchpad()
+        self._log_msg("FMC cleared")
 
     # ------------------------------------------------------------------
     # Page: ROUTE
