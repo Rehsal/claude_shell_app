@@ -351,7 +351,7 @@ class AnnunciatorMonitor:
         self._subscribed_datarefs.clear()
 
     def _get_dataref_value(self, dataref: str) -> Optional[Any]:
-        """Get current value of a dataref."""
+        """Get current value of a subscribed dataref."""
         try:
             dv = self.extplane.get_subscribed_value(dataref)
             return dv.value if dv else None
@@ -404,9 +404,18 @@ class AnnunciatorMonitor:
     def _monitor_loop(self) -> None:
         """Main monitoring loop."""
         logger.info("Annunciator monitor loop started")
+        last_resubscribe = time.time()
+        resubscribe_interval = 10.0  # Re-subscribe every 10 seconds to handle connection resets
 
         while self._running:
             try:
+                # Periodically re-subscribe to handle connection resets
+                now = time.time()
+                if now - last_resubscribe > resubscribe_interval:
+                    if self.extplane.is_connected:
+                        self._subscribe_datarefs()
+                    last_resubscribe = now
+
                 for ann in self._annunciators.values():
                     is_satisfied = self._check_annunciator(ann)
 

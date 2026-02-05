@@ -1377,6 +1377,32 @@ async def annunciator_clear():
     return {"status": "ok"}
 
 
+@app.post("/api/annunciator/test")
+async def annunciator_test(message: str = Form("TEST ANNUNCIATOR")):
+    """Manually trigger a test alert to verify the system works."""
+    import time
+    from src.xplane.annunciator_monitor import AnnunciatorAlert
+
+    monitor = get_annunciator_monitor()
+
+    # Create test alert directly
+    alert = AnnunciatorAlert(
+        name="TEST",
+        message=message,
+        timestamp=time.time()
+    )
+
+    # Add to pending queue
+    with monitor._pending_lock:
+        monitor._pending_alerts.append(alert)
+
+    # Add to history
+    with monitor._alerts_lock:
+        monitor._alerts.append(alert)
+
+    return {"status": "ok", "message": f"Test alert triggered: {message}"}
+
+
 # =============================================================================
 # FMS Programmer API Endpoints
 # =============================================================================

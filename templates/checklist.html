@@ -1276,22 +1276,27 @@
                 const res = await fetch('/api/annunciator/alert');
                 const data = await res.json();
                 if (data.alert) {
+                    console.log('Alert received:', data.alert);
                     showAnnunciatorAlert(data.alert);
                 }
             } catch (e) {
-                // Ignore errors
+                console.log('Poll error:', e);
             }
         }
 
         function showAnnunciatorAlert(alert) {
+            console.log('showAnnunciatorAlert called:', alert.message);
+
             // Play tone
             playAlertTone();
 
             // Show floating alert
             const alertEl = document.getElementById('annunciatorAlert');
             const msgEl = document.getElementById('annunciatorMessage');
+            console.log('Alert element:', alertEl, 'Message element:', msgEl);
             msgEl.textContent = alert.message;
             alertEl.classList.add('show');
+            console.log('Alert classes after show:', alertEl.className);
 
             // Speak the message
             speakAnnunciator(alert.message);
@@ -1361,10 +1366,8 @@
             log.scrollTop = log.scrollHeight;
         }
 
-        // Initialize annunciators on page load
-        document.addEventListener('DOMContentLoaded', () => {
-            initAnnunciators();
-        });
+        // Initialize annunciators after a delay to ensure connection is established
+        setTimeout(initAnnunciators, 2000);
 
         // Poll annunciator alerts alongside checklist polling
         setInterval(pollAnnunciatorAlert, 500);
