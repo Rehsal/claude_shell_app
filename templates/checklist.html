@@ -1254,8 +1254,8 @@
                     await startAnnunciatorMonitor();
                 }
             } catch (e) {
-                annunciatorMonitorActive = false;
-                updateAnnunciatorStatus();
+                // Don't change status on network errors - keep last known state
+                console.log('Annunciator status check failed:', e);
             }
         }
 
@@ -1271,8 +1271,7 @@
         }
 
         async function pollAnnunciatorAlert() {
-            if (!annunciatorMonitorActive) return;
-
+            // Always poll - don't depend on status variable
             try {
                 const res = await fetch('/api/annunciator/alert');
                 const data = await res.json();

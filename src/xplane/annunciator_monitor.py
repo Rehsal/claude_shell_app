@@ -35,8 +35,17 @@ class AnnunciatorCondition:
         if current_value is None:
             return False
 
+        # Handle array datarefs (e.g., thrust_reverser_deploy_ratio is per-engine)
+        # Always use max() for arrays:
+        # - For "increasing" (EXTENDED): max >= threshold means ANY is deployed
+        # - For "decreasing" (RETRACTED): max <= threshold means ALL are retracted
         try:
-            val = float(current_value)
+            if isinstance(current_value, (list, tuple)):
+                if not current_value:
+                    return False
+                val = max(float(v) for v in current_value)
+            else:
+                val = float(current_value)
         except (TypeError, ValueError):
             return False
 
@@ -98,8 +107,8 @@ class AnnunciatorMonitor:
         self._monitor_thread: Optional[threading.Thread] = None
         self._poll_interval = 0.3  # Poll every 300ms
 
-        # Pending alert for UI to fetch
-        self._pending_alert: Optional[AnnunciatorAlert] = None
+        # Pending alerts queue for UI to fetch (FIFO)
+        self._pending_alerts: List[AnnunciatorAlert] = []
         self._pending_lock = threading.Lock()
 
         # Subscribed datarefs
@@ -230,16 +239,15 @@ class AnnunciatorMonitor:
         return result
 
     def get_pending_alert(self) -> Optional[dict]:
-        """Get and clear the pending alert."""
+        """Get and remove the oldest pending alert from the queue."""
         with self._pending_lock:
-            if self._pending_alert:
-                alert = {
-                    'name': self._pending_alert.name,
-                    'message': self._pending_alert.message,
-                    'timestamp': self._pending_alert.timestamp
+            if self._pending_alerts:
+                alert = self._pending_alerts.pop(0)  # FIFO - get oldest first
+                return {
+                    'name': alert.name,
+                    'message': alert.message,
+                    'timestamp': alert.timestamp
                 }
-                self._pending_alert = None
-                return alert
         return None
 
     def get_alerts(self, since: float = 0) -> List[dict]:
@@ -260,7 +268,7 @@ class AnnunciatorMonitor:
         with self._alerts_lock:
             self._alerts.clear()
         with self._pending_lock:
-            self._pending_alert = None
+            self._pending_alerts.clear()
 
     def start(self) -> bool:
         """Start the monitoring thread."""
@@ -384,9 +392,12 @@ class AnnunciatorMonitor:
             if len(self._alerts) > self._max_alerts:
                 self._alerts = self._alerts[-self._max_alerts:]
 
-        # Set as pending for UI to fetch
+        # Add to pending queue for UI to fetch
         with self._pending_lock:
-            self._pending_alert = alert
+            self._pending_alerts.append(alert)
+            # Limit queue size to prevent memory issues
+            if len(self._pending_alerts) > 10:
+                self._pending_alerts = self._pending_alerts[-10:]
 
         logger.info(f"Annunciator triggered: {ann.name} - {ann.message}")
 
