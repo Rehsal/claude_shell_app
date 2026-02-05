@@ -108,6 +108,19 @@ class SimBriefClient:
     def cached_data(self) -> Optional[SimBriefData]:
         return self._cached_data
 
+    def fetch_xml(self, pilot_id: str) -> str:
+        """Fetch the raw SimBrief OFP XML for Zibo UPLINK."""
+        url = f"{SIMBRIEF_API_URL}?userid={pilot_id}"
+        logger.info(f"Fetching SimBrief XML: {url}")
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "CopilotAI/1.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"SimBrief XML fetch: HTTP {e.code}") from e
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"SimBrief connection error: {e.reason}") from e
+
     def fetch(self, pilot_id: str) -> SimBriefData:
         """Fetch the latest OFP for the given SimBrief pilot ID."""
         url = f"{SIMBRIEF_API_URL}?userid={pilot_id}&json=1"
