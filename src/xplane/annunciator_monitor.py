@@ -278,10 +278,18 @@ class AnnunciatorMonitor:
         # Subscribe to all datarefs used by annunciators
         self._subscribe_datarefs()
 
+        # Wait briefly for initial dataref values to arrive
+        time.sleep(0.5)
+
+        # Initialize was_triggered to current state to avoid false alerts on startup
+        for ann in self._annunciators.values():
+            ann.was_triggered = self._check_annunciator(ann)
+            logger.debug(f"Initial state for {ann.name}: {ann.was_triggered}")
+
         self._running = True
         self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor_thread.start()
-        logger.info("Annunciator monitor started")
+        logger.info("Annunciator monitor started (initialized to current state)")
         return True
 
     def stop(self) -> None:
