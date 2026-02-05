@@ -1607,6 +1607,14 @@ async def fms_stop():
     return {"status": "ok"}
 
 
+@app.post("/api/fms/reset")
+async def fms_reset():
+    """Reset FMS programmer state (clear page results, log, and state)."""
+    fms = get_fms_programmer()
+    fms.reset()
+    return {"status": "ok", "message": "Programmer state reset"}
+
+
 @app.get("/api/fms/status")
 async def fms_status():
     """Get FMS programmer status."""

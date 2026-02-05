@@ -241,6 +241,7 @@ class FMSProgrammer:
         self._log: List[str] = []
         self._progress = 0.0
         self._total_steps = 8  # Number of programming pages
+        self._page_results: Dict[str, str] = {}  # page name -> "running"/"completed"/"error"
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -348,6 +349,7 @@ class FMSProgrammer:
         self._state = FMSState.RUNNING
         self._progress = 0.0
         self._current_step = "Starting"
+        self._page_results.clear()
 
         self._thread = threading.Thread(target=self._run_all, daemon=True,
                                         name="fms-programmer")
@@ -377,16 +379,19 @@ class FMSProgrammer:
         self._stop_event.clear()
         self._state = FMSState.RUNNING
         self._current_step = page
+        self._page_results[page] = "running"
 
         def run():
             try:
                 self._ensure_connected()
                 method()
                 self._state = FMSState.COMPLETED
+                self._page_results[page] = "completed"
             except Exception as e:
                 self._log_msg(f"Error on {page}: {e}")
                 logger.exception(f"FMS page error: {page}")
                 self._state = FMSState.ERROR
+                self._page_results[page] = "error"
 
         self._thread = threading.Thread(target=run, daemon=True, name="fms-programmer")
         self._thread.start()
@@ -401,6 +406,17 @@ class FMSProgrammer:
             self._state = FMSState.STOPPED
         self._log_msg("Programming stopped")
 
+    def reset(self):
+        """Reset programmer state so the user can start fresh."""
+        if self._state == FMSState.RUNNING:
+            self.stop()
+        self._state = FMSState.IDLE
+        self._current_step = ""
+        self._log.clear()
+        self._progress = 0.0
+        self._page_results.clear()
+        self._log_msg("Programmer reset")
+
     def get_status(self) -> Dict:
         return {
             "state": self._state.value,
@@ -409,6 +425,7 @@ class FMSProgrammer:
             "log": list(self._log[-200:]),
             "has_data": self._data is not None,
             "route": f"{self._data.origin}->{self._data.destination}" if self._data else None,
+            "page_results": dict(self._page_results),
         }
 
     def read_cdu_screen(self) -> Dict:
@@ -444,13 +461,16 @@ class FMSProgrammer:
                     self._state = FMSState.STOPPED
                     return
                 self._current_step = name
+                self._page_results[name] = "running"
                 self._progress = (i / len(steps)) * 100
                 self._log_msg(f"--- {name.upper()} ---")
                 try:
                     method()
+                    self._page_results[name] = "completed"
                 except Exception as e:
                     self._log_msg(f"Error on {name}: {e} (continuing)")
                     logger.exception(f"FMS step error: {name}")
+                    self._page_results[name] = "error"
 
             self._progress = 100.0
             self._current_step = "Complete"
