@@ -83,7 +83,7 @@
         .btn-warning { background: #f59e0b; color: #000; }
         .btn-warning:hover:not(:disabled) { background: #fbbf24; }
 
-        /* Load bar (shown when no checklist loaded) */
+        /* Load bar */
         .load-bar {
             display: flex;
             gap: 8px;
@@ -91,6 +91,7 @@
             background: #16213e;
             border-bottom: 1px solid #374151;
             flex-shrink: 0;
+            align-items: center;
         }
 
         .load-bar input {
@@ -103,6 +104,162 @@
             font-size: 0.8rem;
         }
         .load-bar input:focus { outline: none; border-color: #e94560; }
+
+        /* Checklist grid */
+        .checklist-grid-container {
+            padding: 12px 20px;
+            background: #16213e;
+            border-bottom: 1px solid #374151;
+            flex-shrink: 0;
+            display: none;
+        }
+
+        .checklist-grid-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+
+        .checklist-grid-header h3 {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .checklist-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 8px;
+        }
+
+        .checklist-btn {
+            padding: 10px 12px;
+            border: 2px solid #374151;
+            border-radius: 6px;
+            background: #1a1a2e;
+            color: #e2e8f0;
+            cursor: pointer;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-align: center;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .checklist-btn:hover {
+            border-color: #e94560;
+            background: #0f3460;
+        }
+
+        .checklist-btn.active {
+            border-color: #e94560;
+            background: #0f3460;
+            box-shadow: 0 0 10px rgba(233, 69, 96, 0.3);
+        }
+
+        .checklist-btn.completed {
+            border-color: #10b981;
+            background: rgba(16, 185, 129, 0.1);
+        }
+
+        .checklist-btn.completed .check-icon {
+            display: inline;
+        }
+
+        .checklist-btn .check-icon {
+            display: none;
+            color: #10b981;
+            font-size: 1rem;
+        }
+
+        .checklist-btn .name {
+            word-break: break-word;
+        }
+
+        /* Mode selector bar */
+        .mode-bar {
+            display: none;
+            gap: 10px;
+            padding: 10px 20px;
+            background: #0f3460;
+            border-bottom: 1px solid #374151;
+            flex-shrink: 0;
+            align-items: center;
+        }
+
+        .mode-bar label {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .mode-btn {
+            padding: 6px 16px;
+            border: 1px solid #374151;
+            border-radius: 4px;
+            background: #1a1a2e;
+            color: #e2e8f0;
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .mode-btn:hover {
+            border-color: #e94560;
+        }
+
+        .mode-btn.active {
+            border-color: #e94560;
+            background: #e94560;
+            color: white;
+        }
+
+        /* PTT Button */
+        .ptt-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: 2px solid #374151;
+            background: #1a1a2e;
+            color: #94a3b8;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            transition: all 0.2s;
+        }
+
+        .ptt-btn:hover {
+            border-color: #e94560;
+            color: #e94560;
+        }
+
+        .ptt-btn.listening {
+            border-color: #10b981;
+            background: rgba(16, 185, 129, 0.2);
+            color: #10b981;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+            50% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+        }
+
+        .ptt-feedback {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            font-style: italic;
+        }
 
         /* Progress bar */
         .progress-strip {
@@ -207,25 +364,57 @@
             color: #64748b;
         }
 
-        /* Log toggle */
-        .log-toggle {
-            font-size: 0.75rem;
-            color: #64748b;
-            cursor: pointer;
-            user-select: none;
+        /* Log panel with resizable handle */
+        .log-container {
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            min-height: 100px;
+            max-height: 80vh;
         }
-        .log-toggle:hover { color: #94a3b8; }
+
+        .log-handle {
+            height: 8px;
+            background: #374151;
+            cursor: ns-resize;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-top: 1px solid #4b5563;
+        }
+
+        .log-handle::after {
+            content: '';
+            width: 40px;
+            height: 3px;
+            background: #64748b;
+            border-radius: 2px;
+        }
+
+        .log-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 4px 20px;
+            background: #111827;
+            border-bottom: 1px solid #374151;
+        }
+
+        .log-header span {
+            font-size: 0.7rem;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
 
         .log-panel {
-            height: 160px;
+            flex: 1;
             overflow-y: auto;
             background: #111827;
             font-family: monospace;
             font-size: 0.75rem;
             color: #94a3b8;
-            border-top: 1px solid #374151;
             padding: 8px 20px;
-            flex-shrink: 0;
         }
         .log-panel .entry { padding: 1px 0; white-space: pre-wrap; }
         .log-panel .entry.cmd { color: #4ade80; }
@@ -243,6 +432,100 @@
             color: #64748b;
         }
         .empty-state h3 { color: #94a3b8; margin-bottom: 8px; }
+
+        /* Checkbox styling */
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            color: #9ca3af;
+            font-size: 0.78rem;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        /* Annunciator Alert */
+        .annunciator-alert {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%);
+            border: 2px solid #fca5a5;
+            border-radius: 8px;
+            padding: 16px 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 20px rgba(248, 113, 113, 0.3);
+            z-index: 1000;
+            display: none;
+            animation: alertPulse 0.5s ease-out;
+            max-width: 350px;
+        }
+
+        .annunciator-alert.show {
+            display: block;
+        }
+
+        @keyframes alertPulse {
+            0% { transform: scale(0.8); opacity: 0; }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .annunciator-alert .alert-title {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: #fca5a5;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 4px;
+        }
+
+        .annunciator-alert .alert-message {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .annunciator-alert .alert-dismiss {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: none;
+            border: none;
+            color: #fca5a5;
+            cursor: pointer;
+            font-size: 1.2rem;
+            line-height: 1;
+            padding: 4px;
+        }
+
+        .annunciator-alert .alert-dismiss:hover {
+            color: #fff;
+        }
+
+        /* Annunciator status indicator */
+        .annunciator-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.75rem;
+            color: #6b7280;
+        }
+
+        .annunciator-status.active {
+            color: #4ade80;
+        }
+
+        .annunciator-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #6b7280;
+        }
+
+        .annunciator-status.active .annunciator-dot {
+            background: #4ade80;
+            box-shadow: 0 0 6px #4ade80;
+        }
     </style>
 </head>
 <body>
@@ -254,6 +537,10 @@
             <span class="conn-text" id="connText">Checking...</span>
         </div>
         <div class="spacer"></div>
+        <div class="annunciator-status" id="annunciatorStatus" title="Annunciator Monitor">
+            <div class="annunciator-dot"></div>
+            <span>ANN</span>
+        </div>
         <span class="runner-badge idle" id="runnerBadge">IDLE</span>
         <span id="serverVersion" style="color:#6b7280;font-size:0.65rem;margin-left:8px;"></span>
         <button class="btn btn-primary" id="btnRestart" onclick="restartChecklist()" disabled>Restart</button>
@@ -263,17 +550,35 @@
     <div class="load-bar" id="loadBar">
         <input type="text" id="clistPath" placeholder="Path to checklist file (.xlsx, .csv, or .txt — blank to auto-detect)">
         <button class="btn btn-primary" onclick="loadChecklist()">Load</button>
-        <select id="clSelect" style="padding:6px 10px;background:#1a1a2e;border:1px solid #374151;border-radius:4px;color:#fff;font-size:0.8rem;" disabled>
-            <option value="">— select checklist —</option>
-        </select>
-        <button class="btn btn-success" id="btnStart" onclick="startChecklist()" disabled>Start</button>
         <button class="btn btn-secondary" onclick="releaseChecklist()">Release</button>
-        <label style="display:flex;align-items:center;gap:4px;color:#9ca3af;font-size:0.78rem;cursor:pointer;margin-left:4px;white-space:nowrap;">
+        <label class="checkbox-label">
             <input type="checkbox" id="chkAutoContinue" checked onchange="toggleAutoContinue(this.checked)"> Auto-Continue
         </label>
-        <label style="display:flex;align-items:center;gap:4px;color:#9ca3af;font-size:0.78rem;cursor:pointer;margin-left:4px;white-space:nowrap;">
+        <label class="checkbox-label">
             <input type="checkbox" id="chkSpeech" checked onchange="toggleSpeech(this.checked)"> Speech
         </label>
+    </div>
+
+    <!-- Checklist button grid (shown after load) -->
+    <div class="checklist-grid-container" id="checklistGridContainer">
+        <div class="checklist-grid-header">
+            <h3>Checklists</h3>
+            <button class="btn btn-secondary" onclick="clearAllCompleted()">Clear All</button>
+        </div>
+        <div class="checklist-grid" id="checklistGrid"></div>
+    </div>
+
+    <!-- Mode selector bar -->
+    <div class="mode-bar" id="modeBar">
+        <label>MODE:</label>
+        <button class="mode-btn" id="btnModeStep" onclick="setMode('step')">Step</button>
+        <button class="mode-btn active" id="btnModeRun" onclick="setMode('run')">Run</button>
+        <button class="mode-btn" id="btnModeSeries" onclick="setMode('series')">Run Series</button>
+        <div class="spacer"></div>
+        <button class="ptt-btn" id="pttBtn" title="Hold to speak">
+            <span>&#127908;</span>
+        </button>
+        <span class="ptt-feedback" id="pttFeedback"></span>
     </div>
 
     <!-- Progress -->
@@ -283,7 +588,7 @@
     <div class="items-scroll" id="itemsScroll">
         <div class="empty-state">
             <h3>No Checklist Loaded</h3>
-            <p>Click Load to parse the checklist file, then Start to begin</p>
+            <p>Click Load to parse the checklist file, then select a checklist to begin</p>
         </div>
     </div>
 
@@ -297,8 +602,27 @@
         <span class="progress-text" id="progressText"></span>
     </div>
 
-    <!-- Activity log — always visible -->
-    <div class="log-panel" id="logPanel"></div>
+    <!-- Activity log with resize handle -->
+    <div class="log-container" id="logContainer">
+        <div class="log-handle" id="logHandle"></div>
+        <div class="log-header">
+            <span>Activity Log</span>
+            <button class="btn btn-secondary" style="padding:2px 8px;font-size:0.7rem;" onclick="clearLog()">Clear</button>
+        </div>
+        <div class="log-panel" id="logPanel"></div>
+    </div>
+
+    <!-- Annunciator floating alert -->
+    <div class="annunciator-alert" id="annunciatorAlert">
+        <button class="alert-dismiss" onclick="dismissAnnunciatorAlert()">&times;</button>
+        <div class="alert-title">FLIGHT CONTROL</div>
+        <div class="alert-message" id="annunciatorMessage"></div>
+    </div>
+
+    <!-- Hidden audio element for alert tone -->
+    <audio id="alertTone" preload="auto">
+        <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH2Onp+ZjXp0eISPlZSGb2Bka36KkYt+cmpvfIiOjIJ1bXB5hYuJf3RvcHqEiod+dXFxeoOHhX1zcHJ5gYWDfXVycnl/goF9d3NzeH6Bf3t1c3R4fX9+enZzdHZ7fXx6d3R1dnh7enl3dXV2eHl5eHd2dnd4eHh4d3Z2d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3" type="audio/wav">
+    </audio>
 
     <script>
         let connected = false;
@@ -306,8 +630,145 @@
         let lastHistoryLen = 0;
         let pollTimer = null;
         let paused = false;
+        let currentMode = 'run';
+        let selectedChecklist = null;
+        let allChecklists = [];
+        let completedChecklists = new Set();
+
+        // Annunciator monitoring state
+        let annunciatorMonitorActive = false;
+        let annunciatorAlertTimeout = null;
 
         let pageVersion = document.querySelector('meta[name="server-version"]')?.content || '';
+
+        // Log panel resizing
+        let logHeight = parseInt(localStorage.getItem('logPanelHeight')) || 160;
+        const logContainer = document.getElementById('logContainer');
+        const logHandle = document.getElementById('logHandle');
+        logContainer.style.height = logHeight + 'px';
+
+        let isResizing = false;
+        logHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            document.body.style.cursor = 'ns-resize';
+            document.body.style.userSelect = 'none';
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const containerRect = logContainer.parentElement.getBoundingClientRect();
+            const newHeight = containerRect.bottom - e.clientY;
+            if (newHeight >= 100 && newHeight <= window.innerHeight * 0.8) {
+                logHeight = newHeight;
+                logContainer.style.height = newHeight + 'px';
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                localStorage.setItem('logPanelHeight', logHeight);
+            }
+        });
+
+        // Voice recognition
+        let recognition = null;
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript.toLowerCase().trim();
+                document.getElementById('pttFeedback').textContent = `"${transcript}"`;
+                handleVoiceCommand(transcript);
+            };
+
+            recognition.onerror = (event) => {
+                console.log('Speech error:', event.error);
+                document.getElementById('pttFeedback').textContent = 'Error: ' + event.error;
+            };
+
+            recognition.onend = () => {
+                document.getElementById('pttBtn').classList.remove('listening');
+            };
+        }
+
+        const pttBtn = document.getElementById('pttBtn');
+        if (recognition) {
+            pttBtn.addEventListener('mousedown', () => {
+                pttBtn.classList.add('listening');
+                document.getElementById('pttFeedback').textContent = 'Listening...';
+                recognition.start();
+            });
+            pttBtn.addEventListener('mouseup', () => {
+                recognition.stop();
+            });
+            pttBtn.addEventListener('mouseleave', () => {
+                if (pttBtn.classList.contains('listening')) {
+                    recognition.stop();
+                }
+            });
+        } else {
+            pttBtn.style.display = 'none';
+        }
+
+        function handleVoiceCommand(transcript) {
+            // Voice commands must include "procedure" to be unique from other commands
+            // Patterns: "preflight procedure", "start one procedure", "run series procedure"
+            if (!transcript.includes('procedure')) {
+                document.getElementById('pttFeedback').textContent = 'Say "[checklist] procedure"';
+                return;
+            }
+
+            // Extract the checklist name by removing "procedure" and mode words
+            let checklistName = transcript
+                .replace('procedure', '')
+                .replace('run series', '')
+                .replace('step', '')
+                .replace('run', '')
+                .trim();
+
+            // Check for mode commands
+            if (transcript.includes('run series')) {
+                setMode('series');
+            } else if (transcript.includes('step')) {
+                setMode('step');
+            } else if (transcript.includes('run')) {
+                setMode('run');
+            }
+
+            // Find matching checklist
+            if (checklistName) {
+                const match = findChecklistByVoice(checklistName);
+                if (match) {
+                    selectAndStartChecklist(match);
+                } else {
+                    document.getElementById('pttFeedback').textContent = `No match for "${checklistName}"`;
+                }
+            }
+        }
+
+        function findChecklistByVoice(spoken) {
+            // Fuzzy match: find checklist whose name contains all spoken words
+            const spokenWords = spoken.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+            for (const cl of allChecklists) {
+                const clWords = cl.toLowerCase().replace(/[_-]/g, ' ').split(/\s+/);
+                const allMatch = spokenWords.every(sw =>
+                    clWords.some(cw => cw.includes(sw) || sw.includes(cw))
+                );
+                if (allMatch) return cl;
+            }
+            // Try partial match
+            for (const cl of allChecklists) {
+                if (cl.toLowerCase().includes(spokenWords[0])) return cl;
+            }
+            return null;
+        }
 
         document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('serverVersion').textContent = 'v' + pageVersion;
@@ -361,35 +822,93 @@
                 if (!r.ok) { const e = await r.json(); alert(e.detail || 'Failed'); return; }
                 const d = await r.json();
                 loaded = true;
+                allChecklists = d.checklists;
+                completedChecklists.clear();
 
-                // Populate the checklist dropdown
-                const sel = document.getElementById('clSelect');
-                sel.innerHTML = '';
-                d.checklists.forEach(name => {
-                    const opt = document.createElement('option');
-                    opt.value = name;
-                    opt.textContent = name;
-                    sel.appendChild(opt);
-                });
-                sel.disabled = false;
-                document.getElementById('btnStart').disabled = false;
+                // Show checklist grid
+                renderChecklistGrid();
+                document.getElementById('checklistGridContainer').style.display = 'block';
+                document.getElementById('modeBar').style.display = 'flex';
 
                 document.getElementById('itemsScroll').innerHTML =
-                    `<div class="empty-state"><h3>Loaded ${d.checklists.length} checklists</h3><p>${d.summary || 'Select a checklist and click Start'}</p></div>`;
+                    `<div class="empty-state"><h3>Loaded ${d.checklists.length} checklists</h3><p>${d.summary || 'Select a checklist to begin'}</p></div>`;
+
+                startPolling();
             } catch (e) {
                 alert('Error: ' + e.message);
             }
         }
 
-        // ---- Start / Restart ----
-        async function startChecklist() {
-            const name = document.getElementById('clSelect').value;
-            if (!name) { alert('Select a checklist first'); return; }
+        function renderChecklistGrid() {
+            const grid = document.getElementById('checklistGrid');
+            grid.innerHTML = '';
 
+            allChecklists.forEach(name => {
+                const btn = document.createElement('button');
+                btn.className = 'checklist-btn';
+                if (completedChecklists.has(name)) btn.classList.add('completed');
+                if (selectedChecklist === name) btn.classList.add('active');
+
+                btn.innerHTML = `
+                    <span class="check-icon">&#10003;</span>
+                    <span class="name">${escHtml(name)}</span>
+                `;
+                btn.onclick = () => selectAndStartChecklist(name);
+                grid.appendChild(btn);
+            });
+        }
+
+        function selectAndStartChecklist(name) {
+            selectedChecklist = name;
+            renderChecklistGrid();
+
+            // Start based on mode
+            if (currentMode === 'step') {
+                startChecklistStep(name);
+            } else if (currentMode === 'series') {
+                startChecklistSeries(name);
+            } else {
+                startChecklistRun(name);
+            }
+        }
+
+        // ---- Mode selection ----
+        function setMode(mode) {
+            currentMode = mode;
+            document.getElementById('btnModeStep').classList.toggle('active', mode === 'step');
+            document.getElementById('btnModeRun').classList.toggle('active', mode === 'run');
+            document.getElementById('btnModeSeries').classList.toggle('active', mode === 'series');
+        }
+
+        // ---- Start / Restart ----
+        async function startChecklistRun(name) {
             const fd = new FormData();
             fd.append('name', name);
             fd.append('auto_run', 'true');
             await fetch('/api/checklist/start', { method: 'POST', body: fd });
+
+            lastHistoryLen = 0;
+            document.getElementById('itemsScroll').innerHTML = '';
+            document.getElementById('btnRestart').disabled = false;
+            startPolling();
+        }
+
+        async function startChecklistStep(name) {
+            const fd = new FormData();
+            fd.append('name', name);
+            fd.append('auto_run', 'false');
+            await fetch('/api/checklist/start', { method: 'POST', body: fd });
+
+            lastHistoryLen = 0;
+            document.getElementById('itemsScroll').innerHTML = '';
+            document.getElementById('btnRestart').disabled = false;
+            startPolling();
+        }
+
+        async function startChecklistSeries(name) {
+            const fd = new FormData();
+            fd.append('start', name);
+            await fetch('/api/checklist/run_series', { method: 'POST', body: fd });
 
             lastHistoryLen = 0;
             document.getElementById('itemsScroll').innerHTML = '';
@@ -421,6 +940,17 @@
 
         // ---- Render ----
         function renderStatus(s) {
+            // Update completed checklists from server
+            if (s.completed_checklists) {
+                completedChecklists = new Set(s.completed_checklists);
+            }
+            if (s.all_checklists && s.all_checklists.length > 0) {
+                allChecklists = s.all_checklists;
+            }
+            if (allChecklists.length > 0 && loaded) {
+                renderChecklistGrid();
+            }
+
             // Badge
             const badge = document.getElementById('runnerBadge');
             badge.textContent = s.state.toUpperCase().replace('_', ' ');
@@ -482,9 +1012,9 @@
                 if (nearBottom) lp.scrollTop = lp.scrollHeight;
             }
 
-            // Stop polling when completed
-            if (s.state === 'completed' || s.state === 'idle') {
-                // keep polling but at lower rate
+            // Update active checklist in grid
+            if (s.current_checklist_name) {
+                selectedChecklist = s.current_checklist_name;
             }
         }
 
@@ -594,6 +1124,16 @@
             await fetch('/api/checklist/skip', { method: 'POST' });
         }
 
+        async function clearAllCompleted() {
+            await fetch('/api/checklist/clear_completed', { method: 'POST' });
+            completedChecklists.clear();
+            renderChecklistGrid();
+        }
+
+        function clearLog() {
+            document.getElementById('logPanel').innerHTML = '';
+        }
+
         let speechQueue = [];
         let isSpeaking = false;
 
@@ -644,11 +1184,13 @@
             await fetch('/api/checklist/release', { method: 'POST' });
             loaded = false;
             lastHistoryLen = 0;
-            document.getElementById('btnStart').disabled = true;
+            selectedChecklist = null;
+            allChecklists = [];
+            completedChecklists.clear();
+
             document.getElementById('btnRestart').disabled = true;
-            const sel = document.getElementById('clSelect');
-            sel.innerHTML = '<option value="">— select checklist —</option>';
-            sel.disabled = true;
+            document.getElementById('checklistGridContainer').style.display = 'none';
+            document.getElementById('modeBar').style.display = 'none';
             document.getElementById('itemsScroll').innerHTML =
                 '<div class="empty-state"><h3>Checklist Released</h3><p>Edit your file, then click Load to reload</p></div>';
         }
@@ -666,6 +1208,170 @@
             d.textContent = s;
             return d.innerHTML;
         }
+
+        // ---- Annunciator Monitoring ----
+        async function initAnnunciators() {
+            try {
+                // Load annunciators from default file
+                const form = new FormData();
+                const loadRes = await fetch('/api/annunciator/load', { method: 'POST', body: form });
+                const loadData = await loadRes.json();
+                if (loadData.status === 'ok' && loadData.count > 0) {
+                    console.log(`Loaded ${loadData.count} annunciators from ${loadData.path}`);
+                    // Start monitoring if ExtPlane is connected
+                    if (connected) {
+                        await startAnnunciatorMonitor();
+                    }
+                }
+            } catch (e) {
+                console.log('Annunciator init:', e.message);
+            }
+        }
+
+        async function startAnnunciatorMonitor() {
+            try {
+                const res = await fetch('/api/annunciator/start', { method: 'POST' });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    annunciatorMonitorActive = true;
+                    updateAnnunciatorStatus();
+                    console.log('Annunciator monitor started');
+                }
+            } catch (e) {
+                console.log('Failed to start annunciator monitor:', e.message);
+            }
+        }
+
+        async function checkAnnunciatorStatus() {
+            try {
+                const res = await fetch('/api/annunciator/status');
+                const data = await res.json();
+                annunciatorMonitorActive = data.running;
+                updateAnnunciatorStatus();
+
+                // If connected but not running, try to start
+                if (connected && !annunciatorMonitorActive && data.annunciator_count > 0) {
+                    await startAnnunciatorMonitor();
+                }
+            } catch (e) {
+                annunciatorMonitorActive = false;
+                updateAnnunciatorStatus();
+            }
+        }
+
+        function updateAnnunciatorStatus() {
+            const el = document.getElementById('annunciatorStatus');
+            if (annunciatorMonitorActive) {
+                el.classList.add('active');
+                el.title = 'Annunciator Monitor: Active';
+            } else {
+                el.classList.remove('active');
+                el.title = 'Annunciator Monitor: Inactive';
+            }
+        }
+
+        async function pollAnnunciatorAlert() {
+            if (!annunciatorMonitorActive) return;
+
+            try {
+                const res = await fetch('/api/annunciator/alert');
+                const data = await res.json();
+                if (data.alert) {
+                    showAnnunciatorAlert(data.alert);
+                }
+            } catch (e) {
+                // Ignore errors
+            }
+        }
+
+        function showAnnunciatorAlert(alert) {
+            // Play tone
+            playAlertTone();
+
+            // Show floating alert
+            const alertEl = document.getElementById('annunciatorAlert');
+            const msgEl = document.getElementById('annunciatorMessage');
+            msgEl.textContent = alert.message;
+            alertEl.classList.add('show');
+
+            // Speak the message
+            speakAnnunciator(alert.message);
+
+            // Auto-dismiss after 5 seconds
+            if (annunciatorAlertTimeout) {
+                clearTimeout(annunciatorAlertTimeout);
+            }
+            annunciatorAlertTimeout = setTimeout(() => {
+                dismissAnnunciatorAlert();
+            }, 5000);
+
+            // Log it
+            addLogEntry('ANN: ' + alert.message, 'zibo');
+        }
+
+        function dismissAnnunciatorAlert() {
+            const alertEl = document.getElementById('annunciatorAlert');
+            alertEl.classList.remove('show');
+            if (annunciatorAlertTimeout) {
+                clearTimeout(annunciatorAlertTimeout);
+                annunciatorAlertTimeout = null;
+            }
+        }
+
+        function playAlertTone() {
+            // Create a simple beep using Web Audio API
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+
+                oscillator.frequency.value = 880; // A5 note
+                oscillator.type = 'sine';
+                gainNode.gain.value = 0.3;
+
+                oscillator.start();
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } catch (e) {
+                console.log('Could not play alert tone:', e);
+            }
+        }
+
+        function speakAnnunciator(text) {
+            if (!window.speechSynthesis) return;
+
+            // Cancel any current speech
+            speechSynthesis.cancel();
+
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = 1.0;
+            utterance.pitch = 1.0;
+            utterance.volume = 1.0;
+            speechSynthesis.speak(utterance);
+        }
+
+        function addLogEntry(msg, cls) {
+            const log = document.getElementById('logPanel');
+            const entry = document.createElement('div');
+            entry.className = 'entry ' + (cls || '');
+            entry.textContent = msg;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // Initialize annunciators on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            initAnnunciators();
+        });
+
+        // Poll annunciator alerts alongside checklist polling
+        setInterval(pollAnnunciatorAlert, 500);
+
+        // Periodically check annunciator status
+        setInterval(checkAnnunciatorStatus, 5000);
     </script>
 </body>
 </html>

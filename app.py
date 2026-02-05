@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 # X-Plane integration
-from src.xplane import XPlaneConfig, CommandsLoader, ChecklistRunner
+from src.xplane import XPlaneConfig, CommandsLoader, ChecklistRunner, AnnunciatorMonitor
 from src.xplane.command_categories import categorize_commands
 from src.xplane.extplane_client import get_client, ExtPlaneClient
 from src.xplane.script_executor import ScriptExecutor
@@ -1251,6 +1251,132 @@ async def checklist_status():
     return runner.get_status()
 
 
+@app.get("/api/checklist/completed")
+async def checklist_completed():
+    """Return list of completed checklist names."""
+    runner = get_checklist_runner()
+    return {"completed": runner.get_completed()}
+
+
+@app.post("/api/checklist/clear_completed")
+async def checklist_clear_completed():
+    """Reset all completion tracking."""
+    runner = get_checklist_runner()
+    runner.clear_completed()
+    return {"status": "ok", "message": "Completion states cleared"}
+
+
+@app.post("/api/checklist/run_series")
+async def checklist_run_series(start: str = Form(...)):
+    """Run checklists in sequence starting from the specified checklist."""
+    runner = get_checklist_runner()
+    if runner.run_series(start):
+        return {"status": "ok", "message": f"Running series from {start}",
+                "state": runner.get_status()}
+    else:
+        raise HTTPException(status_code=404, detail=f"Checklist '{start}' not found")
+
+
+# =============================================================================
+# Annunciator Monitor API Endpoints
+# =============================================================================
+
+_annunciator_monitor: Optional[AnnunciatorMonitor] = None
+
+
+def get_annunciator_monitor() -> AnnunciatorMonitor:
+    """Get or create the global AnnunciatorMonitor."""
+    global _annunciator_monitor
+    if _annunciator_monitor is None:
+        _annunciator_monitor = AnnunciatorMonitor(get_client())
+    return _annunciator_monitor
+
+
+@app.post("/api/annunciator/load")
+async def annunciator_load(path: str = Form("")):
+    """Load annunciators from an XLSX file."""
+    monitor = get_annunciator_monitor()
+
+    if not path:
+        # Auto-detect annunciator file in app directory
+        candidate = Path(__file__).parent / "CopilotAI_Annunciators.xlsx"
+        if candidate.exists():
+            path = str(candidate)
+
+    if not path:
+        raise HTTPException(status_code=400, detail="No path provided and could not find CopilotAI_Annunciators.xlsx")
+
+    try:
+        count = monitor.load_from_xlsx(path)
+        return {"status": "ok", "count": count, "path": path}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/annunciator/start")
+async def annunciator_start():
+    """Start annunciator monitoring."""
+    monitor = get_annunciator_monitor()
+
+    # Ensure ExtPlane is connected
+    client = get_client()
+    if not client.is_connected:
+        client.connect()
+    monitor.extplane = client
+
+    if monitor.start():
+        return {"status": "ok", "message": "Annunciator monitoring started"}
+    else:
+        raise HTTPException(status_code=400, detail="Could not start monitor - check ExtPlane connection and loaded annunciators")
+
+
+@app.post("/api/annunciator/stop")
+async def annunciator_stop():
+    """Stop annunciator monitoring."""
+    monitor = get_annunciator_monitor()
+    monitor.stop()
+    return {"status": "ok", "message": "Annunciator monitoring stopped"}
+
+
+@app.get("/api/annunciator/status")
+async def annunciator_status():
+    """Get annunciator monitor status."""
+    monitor = get_annunciator_monitor()
+    return monitor.get_status()
+
+
+@app.get("/api/annunciator/list")
+async def annunciator_list():
+    """List all loaded annunciators."""
+    monitor = get_annunciator_monitor()
+    return {"annunciators": monitor.get_annunciators()}
+
+
+@app.get("/api/annunciator/alert")
+async def annunciator_alert():
+    """Get pending alert (if any). Returns null if no alert pending."""
+    monitor = get_annunciator_monitor()
+    alert = monitor.get_pending_alert()
+    return {"alert": alert}
+
+
+@app.get("/api/annunciator/alerts")
+async def annunciator_alerts(since: float = 0):
+    """Get all alerts since a timestamp."""
+    monitor = get_annunciator_monitor()
+    return {"alerts": monitor.get_alerts(since)}
+
+
+@app.post("/api/annunciator/clear")
+async def annunciator_clear():
+    """Clear all alerts."""
+    monitor = get_annunciator_monitor()
+    monitor.clear_alerts()
+    return {"status": "ok"}
+
+
 # =============================================================================
 # FMS Programmer API Endpoints
 # =============================================================================
@@ -1268,6 +1394,7 @@ def get_fms_programmer() -> FMSProgrammer:
             keypress_delay=xplane_config.fms_keypress_delay,
             page_delay=xplane_config.fms_page_delay,
             verify_retries=xplane_config.fms_verify_retries,
+            xplane_path=xplane_config.xplane_install_path,
         )
     return _fms_programmer
 
@@ -1402,6 +1529,22 @@ async def fms_program_page(page: str):
         fms.program_page(page)
         return {"status": "ok", "page": page}
     except (RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/fms/uplink")
+async def fms_uplink():
+    """Trigger Zibo UPLINK (write b738x.xml and press REQUEST on PERF INIT)."""
+    import asyncio
+    fms = get_fms_programmer()
+    client = get_client()
+    if not client.is_connected:
+        client.connect()
+    fms.client = client
+    try:
+        await asyncio.to_thread(fms.trigger_uplink)
+        return {"status": "ok", "message": "UPLINK triggered"}
+    except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
