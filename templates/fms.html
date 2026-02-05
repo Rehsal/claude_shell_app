@@ -296,6 +296,8 @@
         let screenTimer = null;
         let isRunning = false;
         let lastLogLen = 0;
+        let pageQueue = [];
+        let wasRunning = false;
 
         // Map of backend page names to button IDs
         const PAGE_BUTTONS = {
@@ -384,6 +386,16 @@
         }
 
         async function programPage(page) {
+            if (isRunning) {
+                // Queue it if not already queued
+                if (!pageQueue.includes(page)) {
+                    pageQueue.push(page);
+                    // Show queued button with running style as preview
+                    const btnId = PAGE_BUTTONS[page];
+                    if (btnId) document.getElementById(btnId)?.classList.add('status-running');
+                }
+                return;
+            }
             try {
                 const resp = await fetch(`/api/fms/program/${page}`, { method: 'POST' });
                 const data = await resp.json();
@@ -393,13 +405,27 @@
             }
         }
 
+        async function processQueue() {
+            if (pageQueue.length === 0) return;
+            const next = pageQueue.shift();
+            try {
+                const resp = await fetch(`/api/fms/program/${next}`, { method: 'POST' });
+                const data = await resp.json();
+                if (!resp.ok) pageQueue = []; // Clear queue on error
+            } catch (e) {
+                pageQueue = [];
+            }
+        }
+
         async function stopProgramming() {
+            pageQueue = [];
             try {
                 await fetch('/api/fms/stop', { method: 'POST' });
             } catch (e) {}
         }
 
         async function clearFMS() {
+            pageQueue = [];
             try {
                 // Reset programmer state only (no CDU commands)
                 await fetch('/api/fms/reset', { method: 'POST' });
@@ -459,6 +485,12 @@
             document.getElementById('progressFill').style.width = s.progress + '%';
 
             isRunning = s.state === 'running';
+
+            // When programmer finishes and there are queued pages, start next
+            if (wasRunning && !isRunning && pageQueue.length > 0) {
+                processQueue();
+            }
+            wasRunning = isRunning;
 
             // Update page button statuses
             updatePageButtons(s.page_results);
