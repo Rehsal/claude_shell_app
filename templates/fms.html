@@ -401,10 +401,14 @@
 
         async function clearFMS() {
             try {
+                // Reset programmer state (page results, log, progress)
                 await fetch('/api/fms/reset', { method: 'POST' });
-                // Reset all button states visually
                 resetPageButtons();
                 lastLogLen = 0;
+                document.getElementById('logContent').innerHTML = '';
+                document.getElementById('progressFill').style.width = '0%';
+                // Clear the FMC route via CDU commands
+                await fetch('/api/fms/clear', { method: 'POST' });
             } catch (e) {}
         }
 

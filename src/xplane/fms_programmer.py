@@ -415,7 +415,7 @@ class FMSProgrammer:
         self._log.clear()
         self._progress = 0.0
         self._page_results.clear()
-        self._log_msg("Programmer reset")
+        self._log_msg("--- RESET ---")
 
     def get_status(self) -> Dict:
         return {
