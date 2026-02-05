@@ -29,6 +29,7 @@ class AnnunciatorCondition:
     dataref: str
     from_value: float
     to_value: float
+    operator: str = ""  # Optional comparison operator: >, <, >=, <=
 
     def is_satisfied(self, current_value: Any) -> bool:
         """Check if the condition is satisfied by the current value."""
@@ -48,6 +49,17 @@ class AnnunciatorCondition:
                 val = float(current_value)
         except (TypeError, ValueError):
             return False
+
+        # If an explicit comparison operator was specified, use it directly
+        if self.operator:
+            if self.operator == '>':
+                return val > self.to_value
+            elif self.operator == '<':
+                return val < self.to_value
+            elif self.operator == '>=':
+                return val >= self.to_value
+            elif self.operator == '<=':
+                return val <= self.to_value
 
         # Determine direction and check condition
         # If to_value > from_value: condition true when value >= to_value (moving up)
@@ -92,7 +104,14 @@ class AnnunciatorMonitor:
     Runs a background thread that continuously polls datarefs and
     checks annunciator conditions. When all conditions for an annunciator
     become true (rising edge), triggers an alert.
+
+    Master disable switch: sim/cockpit/weapons/rockets_armed
+    - 0 = Annunciators ON (enabled)
+    - 1 = Annunciators OFF (disabled)
     """
+
+    # Dataref used as master enable/disable switch
+    MASTER_DISABLE_DATAREF = "sim/cockpit/weapons/rockets_armed"
 
     def __init__(self, extplane_client):
         self.extplane = extplane_client
@@ -193,13 +212,23 @@ class AnnunciatorMonitor:
                         logger.warning(f"Invalid condition values in: {line} - {e}")
                 elif len(parts) == 3:
                     # Format: sw_show:dataref:value (exact match)
+                    # Also supports: sw_show:dataref:>value, <value, >=value, <=value
                     dataref = parts[1].strip()
+                    raw_val = parts[2].strip()
                     try:
-                        val = float(parts[2].strip())
+                        # Check for comparison operator prefix
+                        operator = ""
+                        for op in ('>=', '<=', '>', '<'):
+                            if raw_val.startswith(op):
+                                operator = op
+                                raw_val = raw_val[len(op):]
+                                break
+                        val = float(raw_val)
                         condition = AnnunciatorCondition(
                             dataref=dataref,
                             from_value=val,
-                            to_value=val
+                            to_value=val,
+                            operator=operator
                         )
                         current_annunciator.conditions.append(condition)
                     except ValueError as e:
@@ -319,11 +348,42 @@ class AnnunciatorMonitor:
         """Get current monitor status."""
         return {
             'running': self._running,
+            'enabled': self.is_enabled(),
             'loaded_path': self._loaded_path,
             'annunciator_count': len(self._annunciators),
             'subscribed_datarefs': len(self._subscribed_datarefs),
             'alert_count': len(self._alerts)
         }
+
+    def is_enabled(self) -> bool:
+        """Check if annunciators are enabled (master switch is OFF/0)."""
+        try:
+            val = self._get_dataref_value(self.MASTER_DISABLE_DATAREF)
+            if val is None:
+                return True  # Default to enabled if can't read
+            return float(val) < 0.5  # 0 = enabled, 1 = disabled
+        except Exception:
+            return True  # Default to enabled on error
+
+    def set_enabled(self, enabled: bool) -> bool:
+        """Set the master enable/disable switch. Returns True if successful."""
+        try:
+            if not self.extplane.is_connected:
+                logger.error("ExtPlane not connected, cannot set annunciator switch")
+                return False
+
+            # 0 = enabled (ON), 1 = disabled (OFF)
+            value = 0 if enabled else 1
+            logger.info(f"Setting {self.MASTER_DISABLE_DATAREF} to {value}")
+            result = self.extplane.set_dataref(self.MASTER_DISABLE_DATAREF, value)
+            if result:
+                logger.info(f"Annunciator master switch set to: {'ON' if enabled else 'OFF'}")
+            else:
+                logger.error(f"Failed to send set_dataref command")
+            return result
+        except Exception as e:
+            logger.error(f"Failed to set annunciator master switch: {e}")
+            return False
 
     def _subscribe_datarefs(self) -> None:
         """Subscribe to all datarefs needed by annunciators."""
@@ -331,6 +391,9 @@ class AnnunciatorMonitor:
         for ann in self._annunciators.values():
             for cond in ann.conditions:
                 datarefs.add(cond.dataref)
+
+        # Also subscribe to the master disable dataref
+        datarefs.add(self.MASTER_DISABLE_DATAREF)
 
         for dataref in datarefs:
             if dataref not in self._subscribed_datarefs:
@@ -415,6 +478,11 @@ class AnnunciatorMonitor:
                     if self.extplane.is_connected:
                         self._subscribe_datarefs()
                     last_resubscribe = now
+
+                # Check master disable switch - skip processing if disabled
+                if not self.is_enabled():
+                    time.sleep(self._poll_interval)
+                    continue
 
                 for ann in self._annunciators.values():
                     is_satisfied = self._check_annunciator(ann)
