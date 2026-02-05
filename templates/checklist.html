@@ -515,6 +515,10 @@
             color: #4ade80;
         }
 
+        .annunciator-status.disabled {
+            color: #f87171;
+        }
+
         .annunciator-dot {
             width: 6px;
             height: 6px;
@@ -525,6 +529,41 @@
         .annunciator-status.active .annunciator-dot {
             background: #4ade80;
             box-shadow: 0 0 6px #4ade80;
+        }
+
+        .annunciator-status.disabled .annunciator-dot {
+            background: #f87171;
+        }
+
+        /* ANN Toggle Switch */
+        .ann-toggle {
+            position: relative;
+            width: 36px;
+            height: 18px;
+            background: #374151;
+            border-radius: 9px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .ann-toggle.on {
+            background: #10b981;
+        }
+
+        .ann-toggle::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 14px;
+            height: 14px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+
+        .ann-toggle.on::after {
+            transform: translateX(18px);
         }
     </style>
 </head>
@@ -540,6 +579,7 @@
         <div class="annunciator-status" id="annunciatorStatus" title="Annunciator Monitor">
             <div class="annunciator-dot"></div>
             <span>ANN</span>
+            <div class="ann-toggle on" id="annToggle" onclick="toggleAnnunciator()" title="Toggle Annunciators On/Off"></div>
         </div>
         <span class="runner-badge idle" id="runnerBadge">IDLE</span>
         <span id="serverVersion" style="color:#6b7280;font-size:0.65rem;margin-left:8px;"></span>
@@ -637,6 +677,7 @@
 
         // Annunciator monitoring state
         let annunciatorMonitorActive = false;
+        let annunciatorEnabled = true;  // Master switch state
         let annunciatorAlertTimeout = null;
 
         let pageVersion = document.querySelector('meta[name="server-version"]')?.content || '';
@@ -1247,6 +1288,9 @@
                 const res = await fetch('/api/annunciator/status');
                 const data = await res.json();
                 annunciatorMonitorActive = data.running;
+                if (data.enabled !== undefined) {
+                    annunciatorEnabled = data.enabled;
+                }
                 updateAnnunciatorStatus();
 
                 // If connected but not running, try to start
@@ -1261,12 +1305,48 @@
 
         function updateAnnunciatorStatus() {
             const el = document.getElementById('annunciatorStatus');
-            if (annunciatorMonitorActive) {
+            const toggle = document.getElementById('annToggle');
+
+            // Update toggle state
+            if (annunciatorEnabled) {
+                toggle.classList.add('on');
+            } else {
+                toggle.classList.remove('on');
+            }
+
+            // Update status indicator
+            el.classList.remove('active', 'disabled');
+            if (!annunciatorEnabled) {
+                el.classList.add('disabled');
+                el.title = 'Annunciator Monitor: OFF';
+            } else if (annunciatorMonitorActive) {
                 el.classList.add('active');
                 el.title = 'Annunciator Monitor: Active';
             } else {
-                el.classList.remove('active');
                 el.title = 'Annunciator Monitor: Inactive';
+            }
+        }
+
+        async function toggleAnnunciator() {
+            const newState = !annunciatorEnabled;
+            console.log('Toggling annunciator to:', newState);
+
+            const form = new FormData();
+            form.append('enabled', newState ? 'true' : 'false');
+
+            try {
+                const res = await fetch('/api/annunciator/toggle', { method: 'POST', body: form });
+                const data = await res.json();
+                console.log('Toggle response:', data);
+                if (data.status === 'ok') {
+                    annunciatorEnabled = data.enabled;
+                    updateAnnunciatorStatus();
+                    console.log('Annunciator switch:', annunciatorEnabled ? 'ON' : 'OFF');
+                } else {
+                    console.log('Toggle failed:', data);
+                }
+            } catch (e) {
+                console.log('Failed to toggle annunciator:', e);
             }
         }
 

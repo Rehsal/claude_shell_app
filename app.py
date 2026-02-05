@@ -1403,6 +1403,31 @@ async def annunciator_test(message: str = Form("TEST ANNUNCIATOR")):
     return {"status": "ok", "message": f"Test alert triggered: {message}"}
 
 
+@app.post("/api/annunciator/toggle")
+async def annunciator_toggle(enabled: str = Form("")):
+    """
+    Toggle annunciator master switch.
+
+    enabled=true: Set rockets_armed=0 (annunciators ON)
+    enabled=false/empty: Set rockets_armed=1 (annunciators OFF)
+    """
+    monitor = get_annunciator_monitor()
+
+    # Parse enabled - treat 'true', '1', 'on' as True
+    is_enabled = enabled.lower() in ('true', '1', 'on', 'yes')
+
+    # Ensure ExtPlane is connected
+    client = get_client()
+    if not client.is_connected:
+        client.connect()
+    monitor.extplane = client
+
+    if monitor.set_enabled(is_enabled):
+        return {"status": "ok", "enabled": is_enabled}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to set annunciator switch")
+
+
 # =============================================================================
 # FMS Programmer API Endpoints
 # =============================================================================
