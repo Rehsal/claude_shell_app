@@ -8,11 +8,13 @@ each entry.
 
 import base64
 import logging
+import os
 import re
 import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .extplane_client import ExtPlaneClient
@@ -224,10 +226,12 @@ class FMSProgrammer:
     """Page-by-page FMS programmer using SimBrief data."""
 
     def __init__(self, client: ExtPlaneClient, keypress_delay: float = 0.08,
-                 page_delay: float = 0.5, verify_retries: int = 2):
+                 page_delay: float = 0.5, verify_retries: int = 2,
+                 xplane_path: str = ""):
         self.client = client
         self.cdu = CDUInterface(client, keypress_delay, page_delay)
         self.verify_retries = verify_retries
+        self.xplane_path = xplane_path
 
         self._simbrief_client = SimBriefClient()
         self._data: Optional[SimBriefData] = None
@@ -251,11 +255,87 @@ class FMSProgrammer:
         return self._data
 
     def fetch_simbrief(self, pilot_id: str) -> SimBriefData:
-        """Fetch SimBrief OFP and cache it."""
+        """Fetch SimBrief OFP and cache it. Also writes b738x.xml for Zibo UPLINK."""
         self._log_msg(f"Fetching SimBrief OFP for pilot {pilot_id}...")
         self._data = self._simbrief_client.fetch(pilot_id)
         self._log_msg(f"OFP loaded: {self._data.origin} -> {self._data.destination}")
+
+        # Write b738x.xml for Zibo UPLINK
+        try:
+            self._write_uplink_file(pilot_id)
+        except Exception as e:
+            self._log_msg(f"Warning: Could not write b738x.xml: {e}")
+
         return self._data
+
+    def _write_uplink_file(self, pilot_id: str):
+        """Fetch SimBrief XML and save as b738x.xml for Zibo UPLINK."""
+        if not self.xplane_path:
+            self._log_msg("No X-Plane path configured, skipping b738x.xml")
+            return
+
+        fms_plans = Path(self.xplane_path) / "Output" / "FMS plans"
+        fms_plans.mkdir(parents=True, exist_ok=True)
+
+        xml_data = self._simbrief_client.fetch_xml(pilot_id)
+        xml_path = fms_plans / "b738x.xml"
+        xml_path.write_text(xml_data, encoding="utf-8")
+        self._log_msg(f"Wrote {xml_path} ({len(xml_data)} bytes)")
+
+    def trigger_uplink(self):
+        """Load weights via file-based trigger for xlua helper script.
+
+        Writes pax/cargo/fuel to a file that the xlua B738.copilotai script
+        polls every 2 seconds. The xlua script can write to Zibo's internal
+        datarefs since it runs in the same xlua context.
+        """
+        self._ensure_connected()
+        d = self._data
+        if not d:
+            self._log_msg("No SimBrief data for weight loading")
+            return
+
+        KGS_LBS = 2.20462
+
+        # SimBrief provides values in lbs; convert cargo/fuel to kg for Zibo
+        pax_count = d.pax_count
+        cargo_kg = d.cargo / KGS_LBS if d.cargo else 0
+        fuel_kg = d.fuel_block / KGS_LBS if d.fuel_block else 0
+
+        self._log_msg(f"Loading weights: {pax_count} pax, cargo={cargo_kg:.0f}kg, fuel={fuel_kg:.0f}kg")
+
+        # Write target values to file for xlua script to read
+        weights_path = Path(self.xplane_path) / "Output" / "FMS plans" / "copilotai_weights.txt"
+        weights_path.write_text(
+            f"pax={pax_count}\ncargo_kg={cargo_kg:.0f}\nfuel_kg={fuel_kg:.0f}\n",
+            encoding="utf-8",
+        )
+        self._log_msg(f"Wrote weights file: {weights_path}")
+
+        # Wait for xlua after_physics() to pick up the file (polls every 2s)
+        self._log_msg("Waiting for xlua script to process file...")
+        for i in range(15):
+            time.sleep(2.0)
+            if self._stop_event and self._stop_event.is_set():
+                return
+            try:
+                content = weights_path.read_text(encoding="utf-8").strip()
+                if content == "DONE":
+                    self._log_msg("Weight loading complete (file marked DONE)")
+                    break
+            except OSError:
+                pass
+        else:
+            self._log_msg("Warning: xlua script did not process file within timeout")
+
+        # Wait for Zibo to process the weight change
+        time.sleep(3.0)
+
+        # Verify weights
+        zfw = self.client.get_dataref("laminar/B738/tab/zfw_weight", timeout=1.0)
+        tow = self.client.get_dataref("laminar/B738/tab/tow_weight", timeout=1.0)
+        fuel = self.client.get_dataref("sim/flightmodel/weight/m_fuel_total", timeout=1.0)
+        self._log_msg(f"After load: ZFW={zfw}, TOW={tow}, fuel={fuel}")
 
     def program_all(self):
         """Run the full programming sequence in a background thread."""
@@ -288,6 +368,7 @@ class FMSProgrammer:
             "n1_limit": self.program_n1_limit,
             "takeoff_ref": self.program_takeoff_ref,
             "vnav": self.program_vnav,
+            "uplink": self.trigger_uplink,
         }
         method = method_map.get(page)
         if not method:
@@ -348,6 +429,7 @@ class FMSProgrammer:
             self._ensure_connected()
 
             steps = [
+                ("efb_load", self.trigger_uplink),
                 ("init_ref", self.program_init_ref),
                 ("route", self.program_route),
                 ("dep_arr", self.program_dep_arr),
@@ -424,6 +506,8 @@ class FMSProgrammer:
 
         title = self.cdu.read_line(0)
         self._log_msg(f"PERF INIT title: {title}")
+
+        self._check_stop()
 
         # CRZ ALT -> LSK 1R
         if d.cruise_altitude:
