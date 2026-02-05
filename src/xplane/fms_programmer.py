@@ -202,7 +202,8 @@ class CDUInterface:
         return None
 
     def enter_value_at_lsk(self, value: str, side: str, row: int,
-                           clear_first: bool = True) -> bool:
+                           clear_first: bool = True,
+                           check_error: bool = True) -> bool:
         """Type a value and press an LSK. Returns False if scratchpad error."""
         if clear_first:
             self.clear_scratchpad()
@@ -210,11 +211,12 @@ class CDUInterface:
         time.sleep(0.1)
         self.press_lsk(side, row)
         time.sleep(0.3)
-        err = self.check_scratchpad_error()
-        if err:
-            logger.warning(f"CDU error after LSK {row}{side} with '{value}': {err}")
-            self.clear_scratchpad()
-            return False
+        if check_error:
+            err = self.check_scratchpad_error()
+            if err:
+                logger.warning(f"CDU error after LSK {row}{side} with '{value}': {err}")
+                self.clear_scratchpad()
+                return False
         return True
 
     def wait_for_page(self, delay: Optional[float] = None):
@@ -240,7 +242,7 @@ class FMSProgrammer:
         self._current_step = ""
         self._log: List[str] = []
         self._progress = 0.0
-        self._total_steps = 8  # Number of programming pages
+        self._total_steps = 7  # Number of programming pages (UPLINK excluded)
         self._page_results: Dict[str, str] = {}  # page name -> "running"/"completed"/"error"
 
         self._thread: Optional[threading.Thread] = None
@@ -446,7 +448,6 @@ class FMSProgrammer:
             self._ensure_connected()
 
             steps = [
-                ("efb_load", self.trigger_uplink),
                 ("init_ref", self.program_init_ref),
                 ("route", self.program_route),
                 ("dep_arr", self.program_dep_arr),
@@ -523,9 +524,7 @@ class FMSProgrammer:
         self.cdu.wait_for_page()
         self.cdu.press_lsk("L", 6)
         self.cdu.wait_for_page()
-
-        title = self.cdu.read_line(0)
-        self._log_msg(f"PERF INIT title: {title}")
+        self._log_msg("On PERF INIT page")
 
         self._check_stop()
 
@@ -533,13 +532,13 @@ class FMSProgrammer:
         if d.cruise_altitude:
             alt_str = f"FL{d.cruise_altitude // 100}" if d.cruise_altitude >= 18000 else str(d.cruise_altitude)
             self._log_msg(f"Entering cruise alt: {alt_str}")
-            self.cdu.enter_value_at_lsk(alt_str, "R", 1)
+            self.cdu.enter_value_at_lsk(alt_str, "R", 1, clear_first=False, check_error=False)
             self._check_stop()
 
         # TRANS ALT -> LSK 4R
         if d.trans_alt:
             self._log_msg(f"Entering transition alt: {d.trans_alt}")
-            self.cdu.enter_value_at_lsk(str(d.trans_alt), "R", 4)
+            self.cdu.enter_value_at_lsk(str(d.trans_alt), "R", 4, clear_first=False, check_error=False)
             self._check_stop()
 
         # EXEC if light is on
@@ -585,26 +584,24 @@ class FMSProgrammer:
         self.cdu.clear_scratchpad()
         self.cdu.press_key("RTE")
         self.cdu.wait_for_page()
-
-        title = self.cdu.read_line(0)
-        self._log_msg(f"RTE page title: {title}")
+        self._log_msg("On RTE page")
 
         # Origin -> LSK 1L
         if d.origin:
             self._log_msg(f"Entering origin: {d.origin}")
-            self.cdu.enter_value_at_lsk(d.origin, "L", 1)
+            self.cdu.enter_value_at_lsk(d.origin, "L", 1, clear_first=False, check_error=False)
             self._check_stop()
 
         # Destination -> LSK 1R
         if d.destination:
             self._log_msg(f"Entering destination: {d.destination}")
-            self.cdu.enter_value_at_lsk(d.destination, "R", 1)
+            self.cdu.enter_value_at_lsk(d.destination, "R", 1, clear_first=False, check_error=False)
             self._check_stop()
 
         # Flight number -> LSK 2L
         if d.flight_number:
             self._log_msg(f"Entering flight number: {d.flight_number}")
-            self.cdu.enter_value_at_lsk(d.flight_number, "L", 2)
+            self.cdu.enter_value_at_lsk(d.flight_number, "L", 2, clear_first=False, check_error=False)
             self._check_stop()
 
         # EXEC to activate route
@@ -659,13 +656,13 @@ class FMSProgrammer:
 
             # Airway -> LSK left side
             if airway and airway != "DIRECT":
-                self.cdu.enter_value_at_lsk(airway, "L", lsk_row)
+                self.cdu.enter_value_at_lsk(airway, "L", lsk_row, clear_first=False, check_error=False)
             else:
                 # Direct: just enter the waypoint on the right
                 pass
 
             # Waypoint -> LSK right side
-            self.cdu.enter_value_at_lsk(waypoint, "R", lsk_row)
+            self.cdu.enter_value_at_lsk(waypoint, "R", lsk_row, clear_first=False, check_error=False)
             self._log_msg(f"  {airway} -> {waypoint}")
 
             lsk_row += 1
@@ -883,14 +880,12 @@ class FMSProgrammer:
         self.cdu.clear_scratchpad()
         self.cdu.press_key("N1_LIMIT")
         self.cdu.wait_for_page()
-
-        title = self.cdu.read_line(0)
-        self._log_msg(f"N1 LIMIT title: {title}")
+        self._log_msg("On N1 LIMIT page")
 
         # Assumed temp -> LSK 1L
         if d.assumed_temp:
             self._log_msg(f"Entering assumed temp: {d.assumed_temp}")
-            self.cdu.enter_value_at_lsk(str(d.assumed_temp), "L", 1)
+            self.cdu.enter_value_at_lsk(str(d.assumed_temp), "L", 1, clear_first=False, check_error=False)
             self._check_stop()
 
         self._log_msg("N1 LIMIT complete")
@@ -911,41 +906,28 @@ class FMSProgrammer:
         self.cdu.press_lsk("R", 6)
         self.cdu.wait_for_page()
 
-        found = False
-        title = self.cdu.read_line(0)
-        if title and "TAKEOFF" in title.upper():
-            found = True
-
         title = self.cdu.read_line(0)
         self._log_msg(f"TAKEOFF REF title: {title}")
 
-        if not found:
+        if not title or "TAKEOFF" not in title.upper():
             self._log_msg("Could not find TAKEOFF REF page, skipping")
             return
 
         # Flap setting -> LSK 1L (default to 5 for 737 if not provided)
         flap = d.flap_setting if d.flap_setting else "5"
         self._log_msg(f"Entering flap setting: {flap}")
-        self.cdu.enter_value_at_lsk(flap, "L", 1)
-        self.cdu.wait_for_page()
+        self.cdu.enter_value_at_lsk(flap, "L", 1, clear_first=False, check_error=False)
         self._check_stop()
 
         # CG/Trim -> LSK 2L
         if d.trim:
             self._log_msg(f"Entering trim: {d.trim}")
-            self.cdu.enter_value_at_lsk(str(d.trim), "L", 2)
-            self.cdu.wait_for_page()
+            self.cdu.enter_value_at_lsk(str(d.trim), "L", 2, clear_first=False, check_error=False)
             self._check_stop()
 
         # Wait for V-speeds to calculate then read them
-        # Layout: line 1 right=V1, line 2 right=VR, line 3 right=V2
-        time.sleep(1.5)
+        time.sleep(0.5)
         screen = self.cdu.read_screen()
-
-        # Log all content lines for debugging
-        non_empty = [(i, l.strip()) for i, l in enumerate(screen) if l and l.strip()]
-        for idx, txt in non_empty:
-            self._log_msg(f"  TKREF [{idx}] {txt}")
 
         # Extract V-speeds from the right side of lines 1, 2, 3
         def extract_right_number(line):
