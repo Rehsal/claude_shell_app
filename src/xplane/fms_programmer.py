@@ -237,6 +237,7 @@ class FMSProgrammer:
 
         self._simbrief_client = SimBriefClient()
         self._data: Optional[SimBriefData] = None
+        self._co_route_name: str = ""
 
         self._state = FMSState.IDLE
         self._current_step = ""
@@ -269,6 +270,12 @@ class FMSProgrammer:
         except Exception as e:
             self._log_msg(f"Warning: Could not write b738x.xml: {e}")
 
+        # Write FMS plan file for CO ROUTE loading
+        try:
+            self._write_fms_plan()
+        except Exception as e:
+            self._log_msg(f"Warning: Could not write FMS plan: {e}")
+
         return self._data
 
     def _write_uplink_file(self, pilot_id: str):
@@ -284,6 +291,51 @@ class FMSProgrammer:
         xml_path = fms_plans / "b738x.xml"
         xml_path.write_text(xml_data, encoding="utf-8")
         self._log_msg(f"Wrote {xml_path} ({len(xml_data)} bytes)")
+
+    def _generate_fms_content(self) -> str:
+        """Generate X-Plane 12 FMS file content from SimBrief navlog data."""
+        d = self._data
+        if not d:
+            raise RuntimeError("No SimBrief data loaded")
+
+        # Map SimBrief waypoint types to X-Plane FMS type codes
+        TYPE_MAP = {"apt": 1, "ndb": 2, "vor": 3}
+
+        waypoints = []
+        for wpt in d.navlog:
+            fms_type = TYPE_MAP.get(wpt.type, 11)  # 11 = fix/waypoint
+            waypoints.append(
+                f"{fms_type} {wpt.ident} 0.000000 {wpt.lat:.6f} {wpt.lon:.6f}"
+            )
+
+        lines = [
+            "I",
+            "1100 Version",
+            "CYCLE 2301",
+            f"ADEP {d.origin}",
+            f"ADES {d.destination}",
+            f"NUMENR {len(waypoints)}",
+        ]
+        lines.extend(waypoints)
+        return "\n".join(lines) + "\n"
+
+    def _write_fms_plan(self):
+        """Generate and save FMS plan file for CO ROUTE loading."""
+        d = self._data
+        if not d or not self.xplane_path:
+            self._log_msg("No X-Plane path configured, skipping FMS plan file")
+            return
+
+        fms_plans = Path(self.xplane_path) / "Output" / "FMS plans"
+        fms_plans.mkdir(parents=True, exist_ok=True)
+
+        route_name = f"{d.origin}{d.destination}"
+        self._co_route_name = route_name
+
+        content = self._generate_fms_content()
+        fms_path = fms_plans / f"{route_name}.fms"
+        fms_path.write_text(content, encoding="utf-8")
+        self._log_msg(f"Wrote FMS plan: {fms_path} ({len(d.navlog)} waypoints)")
 
     def trigger_uplink(self):
         """Load weights via file-based trigger for xlua helper script.
@@ -577,7 +629,12 @@ class FMSProgrammer:
     # ------------------------------------------------------------------
 
     def program_route(self):
-        """Program RTE page: origin, dest, flight number, route."""
+        """Program RTE page using CO ROUTE for instant route loading.
+
+        Loads the entire route from an FMS plan file written during
+        fetch_simbrief(). This is much faster than entering waypoints
+        one by one via the CDU.
+        """
         d = self._data
         self._check_stop()
 
@@ -586,86 +643,28 @@ class FMSProgrammer:
         self.cdu.wait_for_page()
         self._log_msg("On RTE page")
 
-        # Origin -> LSK 1L
-        if d.origin:
-            self._log_msg(f"Entering origin: {d.origin}")
-            self.cdu.enter_value_at_lsk(d.origin, "L", 1, clear_first=False, check_error=False)
-            self._check_stop()
-
-        # Destination -> LSK 1R
-        if d.destination:
-            self._log_msg(f"Entering destination: {d.destination}")
-            self.cdu.enter_value_at_lsk(d.destination, "R", 1, clear_first=False, check_error=False)
-            self._check_stop()
-
-        # Flight number -> LSK 2L
-        if d.flight_number:
-            self._log_msg(f"Entering flight number: {d.flight_number}")
-            self.cdu.enter_value_at_lsk(d.flight_number, "L", 2, clear_first=False, check_error=False)
-            self._check_stop()
-
-        # EXEC to activate route
-        self.cdu.press_exec()
+        # CO ROUTE name (e.g. "KRSWKMIA") -> LSK 2L
+        route_name = self._co_route_name or f"{d.origin}{d.destination}"
+        self._log_msg(f"Loading CO ROUTE: {route_name}")
+        self.cdu.enter_value_at_lsk(route_name, "L", 2)
+        time.sleep(1.0)  # Wait for FMC to load route from file
         self._check_stop()
 
-        # Go to RTE page 2 for airways/waypoints
-        self.cdu.press_key("NEXT_PAGE")
-        self.cdu.wait_for_page()
-
-        # Enter route waypoints as airway/waypoint pairs
-        self._enter_route_waypoints()
-
-        # Final EXEC
-        self.cdu.press_exec()
-        self._log_msg("RTE complete")
-
-    def _enter_route_waypoints(self):
-        """Enter airway/waypoint pairs on RTE page 2+."""
-        d = self._data
-        if not d.navlog:
-            self._log_msg("No navlog waypoints to enter")
-            return
-
-        # Build airway/waypoint pairs from navlog
-        pairs = []
-        for wpt in d.navlog:
-            if wpt.is_sid_star:
-                continue  # SID/STAR handled separately
-            if wpt.type in ("apt",):
-                continue  # Skip airports
-            if wpt.airway and wpt.airway != "DCT":
-                pairs.append((wpt.airway, wpt.ident))
-            elif wpt.ident:
-                pairs.append(("DIRECT", wpt.ident))
-
-        if not pairs:
-            self._log_msg("No route pairs to enter")
-            return
-
-        self._log_msg(f"Entering {len(pairs)} route segments")
-        lsk_row = 1  # Start at row 1 on RTE page 2
-
-        for airway, waypoint in pairs:
+        # Flight number -> LSK 2R
+        if d.flight_number:
+            self._log_msg(f"Entering flight number: {d.flight_number}")
+            self.cdu.enter_value_at_lsk(d.flight_number, "R", 2)
             self._check_stop()
 
-            if lsk_row > 6:
-                # Page is full, go to next page
-                self.cdu.press_key("NEXT_PAGE")
-                self.cdu.wait_for_page()
-                lsk_row = 1
+        # ACTIVATE -> LSK 6R
+        self._log_msg("Activating route")
+        self.cdu.press_lsk("R", 6)
+        self.cdu.wait_for_page()
+        self._check_stop()
 
-            # Airway -> LSK left side
-            if airway and airway != "DIRECT":
-                self.cdu.enter_value_at_lsk(airway, "L", lsk_row, clear_first=False, check_error=False)
-            else:
-                # Direct: just enter the waypoint on the right
-                pass
-
-            # Waypoint -> LSK right side
-            self.cdu.enter_value_at_lsk(waypoint, "R", lsk_row, clear_first=False, check_error=False)
-            self._log_msg(f"  {airway} -> {waypoint}")
-
-            lsk_row += 1
+        # EXEC
+        self.cdu.press_exec()
+        self._log_msg("RTE complete (via CO ROUTE)")
 
     # ------------------------------------------------------------------
     # Page: DEP/ARR
