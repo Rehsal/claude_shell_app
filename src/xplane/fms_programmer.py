@@ -658,11 +658,13 @@ class FMSProgrammer:
             self.cdu.enter_value_at_lsk(str(d.cost_index), "R", 3, check_error=True)
             self._check_stop()
 
-        # CRZ ALT -> LSK 1R
+        # CRZ ALT -> LSK 1R (raw altitude; FMC may warn "UNABLE CRZ ALT" for low values)
         if d.cruise_altitude:
-            alt_str = f"FL{d.cruise_altitude // 100}" if d.cruise_altitude >= 18000 else str(d.cruise_altitude)
+            alt_str = str(d.cruise_altitude)
             self._log_msg(f"Entering cruise alt: {alt_str}")
-            self.cdu.enter_value_at_lsk(alt_str, "R", 1, clear_first=False, check_error=False)
+            self.cdu.enter_value_at_lsk(alt_str, "R", 1, check_error=False)
+            # Clear any "UNABLE CRZ ALT" warning so it doesn't block LNAV/VNAV
+            self.cdu.clear_scratchpad()
             self._check_stop()
 
         # GW -> LSK 1L (enter after ZFW since GW may auto-calculate from ZFW + fuel)
