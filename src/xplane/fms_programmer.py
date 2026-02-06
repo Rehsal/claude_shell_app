@@ -243,7 +243,7 @@ class FMSProgrammer:
         self._current_step = ""
         self._log: List[str] = []
         self._progress = 0.0
-        self._total_steps = 7  # Number of programming pages (UPLINK excluded)
+        self._total_steps = 8  # Number of programming pages (UPLINK excluded)
         self._page_results: Dict[str, str] = {}  # page name -> "running"/"completed"/"error"
 
         self._thread: Optional[threading.Thread] = None
@@ -476,6 +476,7 @@ class FMSProgrammer:
             "init_ref": self.program_init_ref,
             "route": self.program_route,
             "dep_arr": self.program_dep_arr,
+            "legs": self.delete_discontinuities,
             "perf_init": self.program_perf_init,
             "n1_limit": self.program_n1_limit,
             "takeoff_ref": self.program_takeoff_ref,
@@ -559,6 +560,7 @@ class FMSProgrammer:
                 ("init_ref", self.program_init_ref),
                 ("route", self.program_route),
                 ("dep_arr", self.program_dep_arr),
+                ("legs", self.delete_discontinuities),
                 ("perf_init", self.program_perf_init),
                 ("n1_limit", self.program_n1_limit),
                 ("takeoff_ref", self.program_takeoff_ref),
@@ -636,11 +638,38 @@ class FMSProgrammer:
 
         self._check_stop()
 
+        # ZFW -> LSK 3L (enter before GW so FMC can auto-calculate)
+        if d.zfw:
+            zfw_str = f"{d.zfw / 1000:.1f}"
+            self._log_msg(f"Entering ZFW: {zfw_str}")
+            self.cdu.enter_value_at_lsk(zfw_str, "L", 3, check_error=True)
+            self._check_stop()
+
+        # Reserves -> LSK 4L
+        if d.fuel_reserve:
+            rsv_str = f"{d.fuel_reserve / 1000:.1f}"
+            self._log_msg(f"Entering reserves: {rsv_str}")
+            self.cdu.enter_value_at_lsk(rsv_str, "L", 4, check_error=True)
+            self._check_stop()
+
+        # Cost Index -> LSK 3R
+        if d.cost_index is not None:
+            self._log_msg(f"Entering cost index: {d.cost_index}")
+            self.cdu.enter_value_at_lsk(str(d.cost_index), "R", 3, check_error=True)
+            self._check_stop()
+
         # CRZ ALT -> LSK 1R
         if d.cruise_altitude:
             alt_str = f"FL{d.cruise_altitude // 100}" if d.cruise_altitude >= 18000 else str(d.cruise_altitude)
             self._log_msg(f"Entering cruise alt: {alt_str}")
             self.cdu.enter_value_at_lsk(alt_str, "R", 1, clear_first=False, check_error=False)
+            self._check_stop()
+
+        # GW -> LSK 1L (enter after ZFW since GW may auto-calculate from ZFW + fuel)
+        if d.estimated_tow:
+            gw_str = f"{d.estimated_tow / 1000:.1f}"
+            self._log_msg(f"Entering GW: {gw_str}")
+            self.cdu.enter_value_at_lsk(gw_str, "L", 1, check_error=True)
             self._check_stop()
 
         # TRANS ALT -> LSK 4R
@@ -929,6 +958,93 @@ class FMSProgrammer:
         return False
 
     # ------------------------------------------------------------------
+    # Page: LEGS — discontinuity removal
+    # ------------------------------------------------------------------
+
+    def delete_discontinuities(self):
+        """Scan LEGS pages and remove route discontinuities.
+
+        Discontinuities appear as lines containing "DISCONTINUITY" or
+        a row of dashes. To delete: press DEL (puts "DELETE" in scratchpad),
+        then press the LSK for the discontinuity row. After deletion the
+        legs shift up, so re-read after each removal.
+        """
+        self._check_stop()
+
+        self.cdu.clear_scratchpad()
+        self.cdu.press_key("LEGS")
+        self.cdu.wait_for_page()
+        self._log_msg("On LEGS page")
+
+        max_iterations = 20  # safety limit
+        total_removed = 0
+
+        for iteration in range(max_iterations):
+            self._check_stop()
+            found = False
+
+            # Scan current page and all subsequent pages
+            pages_checked = 0
+            max_pages = 10
+            prev_content = None
+
+            while pages_checked < max_pages:
+                self._check_stop()
+                lines = self.cdu.read_screen()
+
+                # Detect page cycling
+                content_key = tuple(l.strip() for l in lines)
+                if prev_content is not None and content_key == prev_content:
+                    break
+                prev_content = content_key
+
+                # Check each line for discontinuity markers
+                for line_idx, line_text in enumerate(lines):
+                    if not line_text or not line_text.strip():
+                        continue
+                    line_upper = line_text.upper().strip()
+                    is_disco = (
+                        "DISCONTINUITY" in line_upper
+                        or line_upper == "THEN"
+                        or (len(line_upper) >= 3 and all(c == '-' for c in line_upper))
+                    )
+                    if is_disco:
+                        lsk_row = (line_idx + 1) // 2
+                        if lsk_row < 1 or lsk_row > 6:
+                            continue
+                        self._log_msg(f"Discontinuity on line {line_idx} (LSK {lsk_row}L): {line_upper}")
+                        self.cdu.clear_scratchpad()
+                        self.cdu.press_key("DEL")
+                        time.sleep(0.1)
+                        self.cdu.press_lsk("L", lsk_row)
+                        self.cdu.wait_for_page()
+                        total_removed += 1
+                        found = True
+                        break  # Re-read from first page after deletion
+
+                if found:
+                    # Go back to LEGS page 1 to re-scan
+                    self.cdu.press_key("LEGS")
+                    self.cdu.wait_for_page()
+                    break
+
+                # No discontinuity on this page, try next
+                pages_checked += 1
+                self.cdu.press_key("NEXT_PAGE")
+                self.cdu.wait_for_page()
+
+            if not found:
+                break
+
+        if total_removed:
+            self._log_msg(f"Removed {total_removed} discontinuit{'y' if total_removed == 1 else 'ies'}")
+        else:
+            self._log_msg("No discontinuities found")
+
+        self.cdu.press_exec()
+        self._log_msg("LEGS complete")
+
+    # ------------------------------------------------------------------
     # Page: PERF INIT (via N1 LIMIT page access)
     # ------------------------------------------------------------------
 
@@ -1065,6 +1181,7 @@ class FMSProgrammer:
             "init_ref": self.program_init_ref,
             "route": self.program_route,
             "dep_arr": self.program_dep_arr,
+            "legs": self.delete_discontinuities,
             "perf_init": self.program_perf_init,
             "n1_limit": self.program_n1_limit,
             "takeoff_ref": self.program_takeoff_ref,
@@ -1089,6 +1206,7 @@ class FMSProgrammer:
             self.program_init_ref,
             self.program_route,
             self.program_dep_arr,
+            self.delete_discontinuities,
             self.program_perf_init,
             self.program_n1_limit,
             self.program_takeoff_ref,
