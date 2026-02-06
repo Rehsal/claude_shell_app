@@ -293,7 +293,13 @@ class FMSProgrammer:
         self._log_msg(f"Wrote {xml_path} ({len(xml_data)} bytes)")
 
     def _generate_fms_content(self) -> str:
-        """Generate X-Plane 12 FMS file content from SimBrief navlog data."""
+        """Generate X-Plane 12 FMS file content from SimBrief navlog data.
+
+        Format matches X-Plane 12 1100 version:
+          type ident procedure altitude latitude longitude
+        Where procedure is ADEP/ADES for airports, airway name or DRCT for
+        enroute fixes, SID--name for SID waypoints, STAR--name for STAR.
+        """
         d = self._data
         if not d:
             raise RuntimeError("No SimBrief data loaded")
@@ -301,23 +307,73 @@ class FMSProgrammer:
         # Map SimBrief waypoint types to X-Plane FMS type codes
         TYPE_MAP = {"apt": 1, "ndb": 2, "vor": 3}
 
-        waypoints = []
+        # Header
+        header = [
+            "I",
+            "1100 version",
+            "CYCLE 2401",
+            f"ADEP {d.origin}",
+        ]
+        if d.origin_runway:
+            header.append(f"DEPRWY RW{d.origin_runway}")
+        if d.sid:
+            header.append(f"SID {d.sid}")
+        header.append(f"ADES {d.destination}")
+        if d.dest_runway:
+            header.append(f"DESRWY RW{d.dest_runway}")
+        if d.star:
+            header.append(f"STAR {d.star}")
+
+        # Build waypoint lines
+        wpt_lines = []
+        has_origin = False
+        has_dest = False
+
         for wpt in d.navlog:
-            fms_type = TYPE_MAP.get(wpt.type, 11)  # 11 = fix/waypoint
-            waypoints.append(
-                f"{fms_type} {wpt.ident} 0.000000 {wpt.lat:.6f} {wpt.lon:.6f}"
+            # Skip SimBrief-only pseudo-waypoints (not in FMC database)
+            if wpt.ident in ("TOC", "TOD"):
+                continue
+
+            is_origin = wpt.ident == d.origin and wpt.type == "apt"
+            is_dest = wpt.ident == d.destination and wpt.type == "apt"
+
+            fms_type = TYPE_MAP.get(wpt.type, 11)
+
+            if is_origin:
+                proc = "ADEP"
+                has_origin = True
+            elif is_dest:
+                proc = "ADES"
+                has_dest = True
+            elif wpt.is_sid_star and wpt.airway:
+                proc = wpt.airway
+            elif wpt.airway and wpt.airway != "DCT":
+                proc = wpt.airway
+            else:
+                proc = "DRCT"
+
+            alt = wpt.altitude if wpt.altitude else 0
+            wpt_lines.append(
+                f"{fms_type} {wpt.ident} {proc} {alt} {wpt.lat} {wpt.lon}"
             )
 
-        lines = [
-            "I",
-            "1100 Version",
-            "CYCLE 2301",
-            f"ADEP {d.origin}",
-            f"ADES {d.destination}",
-            f"NUMENR {len(waypoints)}",
-        ]
-        lines.extend(waypoints)
-        return "\n".join(lines) + "\n"
+        # Ensure origin airport is first entry
+        if not has_origin:
+            origin_wpt = next((w for w in d.navlog if w.ident == d.origin), None)
+            lat = origin_wpt.lat if origin_wpt else 0.0
+            lon = origin_wpt.lon if origin_wpt else 0.0
+            wpt_lines.insert(0, f"1 {d.origin} ADEP 0 {lat} {lon}")
+
+        # Ensure destination airport is last entry
+        if not has_dest:
+            dest_wpt = next((w for w in d.navlog if w.ident == d.destination), None)
+            lat = dest_wpt.lat if dest_wpt else 0.0
+            lon = dest_wpt.lon if dest_wpt else 0.0
+            wpt_lines.append(f"1 {d.destination} ADES 0 {lat} {lon}")
+
+        header.append(f"NUMENR {len(wpt_lines)}")
+        header.extend(wpt_lines)
+        return "\n".join(header) + "\n"
 
     def _write_fms_plan(self):
         """Generate and save FMS plan file for CO ROUTE loading."""
@@ -643,10 +699,24 @@ class FMSProgrammer:
         self.cdu.wait_for_page()
         self._log_msg("On RTE page")
 
+        # Origin -> LSK 1L (required before CO ROUTE is available)
+        if d.origin:
+            self._log_msg(f"Entering origin: {d.origin}")
+            self.cdu.enter_value_at_lsk(d.origin, "L", 1)
+            self._check_stop()
+
+        # Destination -> LSK 1R
+        if d.destination:
+            self._log_msg(f"Entering destination: {d.destination}")
+            self.cdu.enter_value_at_lsk(d.destination, "R", 1)
+            self._check_stop()
+
         # CO ROUTE name (e.g. "KRSWKMIA") -> LSK 2L
         route_name = self._co_route_name or f"{d.origin}{d.destination}"
         self._log_msg(f"Loading CO ROUTE: {route_name}")
-        self.cdu.enter_value_at_lsk(route_name, "L", 2)
+        ok = self.cdu.enter_value_at_lsk(route_name, "L", 2)
+        if not ok:
+            self._log_msg("CO ROUTE entry failed (check FMS plan file)")
         time.sleep(1.0)  # Wait for FMC to load route from file
         self._check_stop()
 
