@@ -1022,7 +1022,7 @@
                     if (useAi && data.interpreted) {
                         responseText = `${formatInterpreted(data.interpreted)} verified`;
                     } else if (data.matched_tokens) {
-                        responseText = `${data.matched_tokens.join(' ')} verified`;
+                        responseText = `${data.matched_tokens.join(' ').replace(/_/g, ' ')} verified`;
                     } else {
                         responseText = 'Command verified';
                     }
@@ -1031,7 +1031,7 @@
                     if (useAi && data.interpreted) {
                         responseText = `${formatInterpreted(data.interpreted)} sent`;
                     } else if (data.matched_tokens) {
-                        responseText = `${data.matched_tokens.join(' ')} sent`;
+                        responseText = `${data.matched_tokens.join(' ').replace(/_/g, ' ')} sent`;
                     } else {
                         responseText = 'Command sent';
                     }
