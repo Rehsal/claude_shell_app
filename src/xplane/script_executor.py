@@ -442,9 +442,13 @@ class ScriptExecutor:
                     self.commands_sent.append(f"{command} (remapped from {dataref})")
                     time.sleep(0.2)  # Let command take effect
                 return
+            # Subscribe before set — ExtPlane may require it for writes to take effect
+            self.client.subscribe(dataref)
+            time.sleep(0.1)
             if self.client.set_dataref(dataref, value):
                 self.datarefs_set.append({"dataref": dataref, "value": value})
                 time.sleep(0.15)  # let Zibo plugin process each write
+            self.client.unsubscribe(dataref)
             return
 
         # cmd.setDataRefArrayValue("path", index, value)
@@ -458,9 +462,13 @@ class ScriptExecutor:
             # For array values, we need to format as [index]=value
             # ExtPlane uses: set dataref[index] value
             array_dataref = f"{dataref}[{index}]"
+            # Subscribe before set — ExtPlane may require it for writes to take effect
+            self.client.subscribe(dataref)
+            time.sleep(0.1)
             if self.client.set_dataref(array_dataref, value):
                 self.datarefs_set.append({"dataref": array_dataref, "value": value})
                 time.sleep(0.15)  # let Zibo plugin process each write
+            self.client.unsubscribe(dataref)
             return
 
     def _evaluate_condition(self, condition: str) -> bool:
