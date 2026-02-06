@@ -964,10 +964,21 @@ class FMSProgrammer:
     def delete_discontinuities(self):
         """Scan LEGS pages and remove route discontinuities.
 
-        Discontinuities appear as lines containing "DISCONTINUITY" or
-        a row of dashes. To delete: press DEL (puts "DELETE" in scratchpad),
-        then press the LSK for the discontinuity row. After deletion the
-        legs shift up, so re-read after each removal.
+        Zibo 737 LEGS layout (14 screen lines, 6 LSK rows):
+          Line 0  = title
+          Lines 1-2  = LSK 1 (waypoint ident on odd line, details on even)
+          Lines 3-4  = LSK 2
+          ...
+          Lines 11-12 = LSK 6
+
+        Discontinuities show as "-----" on the even line (small font row)
+        of an LSK row. To remove: click the LSK of the waypoint AFTER the
+        discontinuity (puts the ident in the scratchpad), then click the
+        LSK of the waypoint BEFORE (connects them, removing the disco).
+
+        If the next waypoint is on the same page (disco_lsk_row + 1), we
+        handle it directly. If the disco is on LSK 6, the next waypoint
+        is on the following page's LSK 1.
         """
         self._check_stop()
 
@@ -998,29 +1009,62 @@ class FMSProgrammer:
                     break
                 prev_content = content_key
 
-                # Check each line for discontinuity markers
-                for line_idx, line_text in enumerate(lines):
+                # Check each line for discontinuity markers (-----)
+                # Discontinuities appear on even-numbered lines (2, 4, 6, 8, 10, 12)
+                for line_idx in range(2, 13, 2):
+                    line_text = lines[line_idx] if line_idx < len(lines) else ""
                     if not line_text or not line_text.strip():
                         continue
-                    line_upper = line_text.upper().strip()
+                    line_upper = line_text.strip().upper()
                     is_disco = (
                         "DISCONTINUITY" in line_upper
-                        or line_upper == "THEN"
                         or (len(line_upper) >= 3 and all(c == '-' for c in line_upper))
                     )
-                    if is_disco:
-                        lsk_row = (line_idx + 1) // 2
-                        if lsk_row < 1 or lsk_row > 6:
-                            continue
-                        self._log_msg(f"Discontinuity on line {line_idx} (LSK {lsk_row}L): {line_upper}")
+                    if not is_disco:
+                        continue
+
+                    disco_lsk = (line_idx + 1) // 2  # LSK row of the disco
+                    if disco_lsk < 1 or disco_lsk > 6:
+                        continue
+
+                    # The waypoint BEFORE the disco is on the same LSK row
+                    # (its ident is on the odd line above: line_idx - 1)
+                    before_lsk = disco_lsk
+
+                    # The waypoint AFTER the disco is on the next LSK row
+                    after_lsk = disco_lsk + 1
+
+                    if after_lsk <= 6:
+                        # Next waypoint is on same page
+                        after_line = lines[after_lsk * 2 - 1] if (after_lsk * 2 - 1) < len(lines) else ""
+                        after_ident = after_line.strip().split()[0] if after_line.strip() else "?"
+                        self._log_msg(f"Discontinuity at LSK {disco_lsk}L, connecting to {after_ident} at LSK {after_lsk}L")
                         self.cdu.clear_scratchpad()
-                        self.cdu.press_key("DEL")
-                        time.sleep(0.1)
-                        self.cdu.press_lsk("L", lsk_row)
+                        self.cdu.press_lsk("L", after_lsk)
+                        time.sleep(0.3)
+                        self.cdu.press_lsk("L", before_lsk)
                         self.cdu.wait_for_page()
-                        total_removed += 1
-                        found = True
-                        break  # Re-read from first page after deletion
+                    else:
+                        # Disco is on LSK 6 — next waypoint is on next page LSK 1
+                        self._log_msg(f"Discontinuity at LSK 6L (end of page), going to next page")
+                        self.cdu.clear_scratchpad()
+                        self.cdu.press_key("NEXT_PAGE")
+                        self.cdu.wait_for_page()
+                        next_lines = self.cdu.read_screen()
+                        after_line = next_lines[1] if len(next_lines) > 1 else ""
+                        after_ident = after_line.strip().split()[0] if after_line.strip() else "?"
+                        self._log_msg(f"Connecting to {after_ident} at LSK 1L (next page)")
+                        self.cdu.press_lsk("L", 1)
+                        time.sleep(0.3)
+                        # Go back to previous page where the disco was
+                        self.cdu.press_key("PREV_PAGE")
+                        self.cdu.wait_for_page()
+                        self.cdu.press_lsk("L", 6)
+                        self.cdu.wait_for_page()
+
+                    total_removed += 1
+                    found = True
+                    break  # Re-scan from page 1 after each removal
 
                 if found:
                     # Go back to LEGS page 1 to re-scan
