@@ -253,15 +253,16 @@
                 <h3>Program Pages</h3>
                 <div class="sequence-hint">Recommended sequence (top-left to bottom-right)</div>
                 <div class="page-buttons">
-                    <button class="btn btn-secondary page-btn" onclick="programPage('uplink')" id="btn_uplink">1. UPLINK</button>
-                    <button class="btn btn-secondary page-btn" onclick="programPage('init_ref')" id="btn_init_ref">2. INIT REF</button>
-                    <button class="btn btn-secondary page-btn" onclick="programPage('route')" id="btn_route">3. ROUTE</button>
-                    <button class="btn btn-secondary page-btn" onclick="programPage('dep_arr')" id="btn_dep_arr">4. DEP/ARR</button>
-                    <button class="btn btn-secondary page-btn" onclick="programPage('perf_init')" id="btn_perf_init">5. PERF INIT</button>
-                    <button class="btn btn-secondary page-btn" onclick="programPage('n1_limit')" id="btn_n1_limit">6. N1 LIMIT</button>
-                    <button class="btn btn-secondary page-btn" onclick="programPage('takeoff_ref')" id="btn_takeoff_ref">7. TAKEOFF REF</button>
-                    <button class="btn btn-secondary page-btn" onclick="programPage('vnav')" id="btn_vnav">8. VNAV</button>
-                    <button class="btn btn-secondary page-btn" onclick="programPage('legs')" id="btn_legs">9. LEGS</button>
+                    <button class="btn btn-secondary page-btn" onclick="programPage('pos_init')" id="btn_pos_init">1. POS INIT</button>
+                    <button class="btn btn-secondary page-btn" onclick="programPage('uplink')" id="btn_uplink">2. UPLINK</button>
+                    <button class="btn btn-secondary page-btn" onclick="programPage('init_ref')" id="btn_init_ref">3. INIT REF</button>
+                    <button class="btn btn-secondary page-btn" onclick="programPage('route')" id="btn_route">4. ROUTE</button>
+                    <button class="btn btn-secondary page-btn" onclick="programPage('dep_arr')" id="btn_dep_arr">5. DEP/ARR</button>
+                    <button class="btn btn-secondary page-btn" onclick="programPage('perf_init')" id="btn_perf_init">6. PERF INIT</button>
+                    <button class="btn btn-secondary page-btn" onclick="programPage('n1_limit')" id="btn_n1_limit">7. N1 LIMIT</button>
+                    <button class="btn btn-secondary page-btn" onclick="programPage('takeoff_ref')" id="btn_takeoff_ref">8. TAKEOFF REF</button>
+                    <button class="btn btn-secondary page-btn" onclick="programPage('vnav')" id="btn_vnav">9. VNAV</button>
+                    <button class="btn btn-secondary page-btn" onclick="programPage('legs')" id="btn_legs">10. LEGS</button>
                     <button class="btn btn-program-all" onclick="programAll()" id="btnProgramAll">Program All</button>
                 </div>
                 <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
@@ -302,6 +303,7 @@
 
         // Map of backend page names to button IDs
         const PAGE_BUTTONS = {
+            'pos_init': 'btn_pos_init',
             'uplink': 'btn_uplink',
             'efb_load': 'btn_uplink',  // _run_all uses "efb_load" for uplink
             'init_ref': 'btn_init_ref',
