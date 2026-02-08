@@ -666,7 +666,14 @@ class FMSProgrammer:
         d = self._data
         self._check_stop()
 
-        # Wait for IRS alignment first
+        # Log GPS position first so pilot can verify correct flight plan
+        gps_pos = self.client.get_dataref(_IRS_GPS_POS, timeout=1.0)
+        if gps_pos:
+            gps_str = _decode_fmc_line(gps_pos)
+            self._log_msg(f"Aircraft GPS position: {gps_str}")
+        self._log_msg(f"Flight plan departure: {d.origin}")
+
+        # Wait for IRS alignment
         self._log_msg("Waiting for IRS alignment...")
         self._wait_for_irs_alignment()
         self._check_stop()
@@ -704,12 +711,6 @@ class FMSProgrammer:
             self._log_msg("Setting IRS position (LSK 4R)")
             self.cdu.press_lsk("R", 4)
             self.cdu.wait_for_page()
-
-        # Log GPS position for verification
-        gps_pos = self.client.get_dataref(_IRS_GPS_POS, timeout=1.0)
-        if gps_pos:
-            gps_str = _decode_fmc_line(gps_pos)
-            self._log_msg(f"GPS position: {gps_str}")
 
         self._log_msg("POS INIT complete")
 
