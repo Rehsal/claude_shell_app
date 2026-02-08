@@ -24,6 +24,7 @@ from src.xplane import XPlaneConfig, CommandsLoader, ChecklistRunner, Annunciato
 from src.xplane.command_categories import categorize_commands
 from src.xplane.extplane_client import get_client, ExtPlaneClient
 from src.xplane.script_executor import ScriptExecutor
+from src.xplane.command_executor import execute_command_script
 from src.xplane.fms_programmer import FMSProgrammer
 
 load_dotenv()
@@ -726,52 +727,44 @@ async def extplane_execute_command(text: str = Form(...)):
     script = best_cmd.script
 
     # Extract datarefs from script for verification (before execution)
-    datarefs_to_watch = []
+    datarefs_to_watch = list(set(
+        m.group(1)
+        for pat in (
+            r'setDataRefValue\s*\(\s*["\']([^"\']+)["\']',
+            r'setDataRefArrayValue\s*\(\s*["\']([^"\']+)["\']',
+            r'getDataRefValue\s*\(\s*["\']([^"\']+)["\']',
+        )
+        for m in re.finditer(pat, script)
+    ))[:10]
 
-    # Extract datarefs from setDataRefValue calls
-    dataref_pattern = r'setDataRefValue\s*\(\s*["\']([^"\']+)["\']'
-    for match in re.finditer(dataref_pattern, script):
-        datarefs_to_watch.append(match.group(1))
-
-    # Extract datarefs from setDataRefArrayValue calls
-    array_pattern = r'setDataRefArrayValue\s*\(\s*["\']([^"\']+)["\']'
-    for match in re.finditer(array_pattern, script):
-        datarefs_to_watch.append(match.group(1))
-
-    # Extract datarefs from getDataRefValue calls (these are read, so also watch them)
-    get_pattern = r'getDataRefValue\s*\(\s*["\']([^"\']+)["\']'
-    for match in re.finditer(get_pattern, script):
-        datarefs_to_watch.append(match.group(1))
-
-    # Remove duplicates
-    datarefs_to_watch = list(set(datarefs_to_watch))
-
-    # Subscribe to datarefs and get initial values
+    # Capture initial values (execute_command_script will subscribe for us,
+    # but we need pre-values for change detection, so subscribe early)
     initial_values = {}
-    for dr in datarefs_to_watch[:10]:
+    for dr in datarefs_to_watch:
         try:
             client.subscribe(dr)
         except Exception as e:
             print(f"Subscribe error for {dr}: {e}")
-
-    # Brief wait for subscriptions to populate
     time.sleep(0.2)
-
-    for dr in datarefs_to_watch[:10]:
+    for dr in datarefs_to_watch:
         val = client.get_subscribed_value(dr)
         initial_values[dr] = val.value if val else None
 
-    # Execute the script using ScriptExecutor
-    executor = ScriptExecutor(client)
-    result = executor.execute(script, operands)
+    # Execute via shared function (handles subscribe/execute/unsubscribe)
+    result = execute_command_script(client, script, operands)
 
-    # Wait for changes to propagate
-    time.sleep(0.3)
+    # Check final values for verification
+    # Re-subscribe briefly since execute_command_script unsubscribed
+    for dr in datarefs_to_watch:
+        try:
+            client.subscribe(dr)
+        except Exception:
+            pass
+    time.sleep(0.1)
 
-    # Check final values
     final_values = {}
     changes = []
-    for dr in datarefs_to_watch[:10]:
+    for dr in datarefs_to_watch:
         try:
             val = client.get_subscribed_value(dr)
             final_values[dr] = val.value if val else None
@@ -790,7 +783,6 @@ async def extplane_execute_command(text: str = Form(...)):
     for dr_set in result.get("datarefs_set", []):
         dr = dr_set.get("dataref", "")
         if dr and dr not in [c["dataref"] for c in changes]:
-            # Subscribe and check value
             try:
                 client.subscribe(dr)
                 time.sleep(0.1)
@@ -805,7 +797,7 @@ async def extplane_execute_command(text: str = Form(...)):
                 pass
 
     # Unsubscribe from all
-    for dr in datarefs_to_watch[:10]:
+    for dr in datarefs_to_watch:
         try:
             client.unsubscribe(dr)
         except:
@@ -1085,6 +1077,15 @@ def get_checklist_runner() -> ChecklistRunner:
 async def api_version():
     """Return server version for cache validation."""
     return {"version": SERVER_VERSION}
+
+
+@app.get("/control", response_class=HTMLResponse)
+async def control_page():
+    """Serve the unified Control page."""
+    with open("templates/control.html", "r", encoding="utf-8") as f:
+        html = f.read()
+    html = html.replace("</head>", f'<meta name="server-version" content="{SERVER_VERSION}"></head>', 1)
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.get("/checklist", response_class=HTMLResponse)

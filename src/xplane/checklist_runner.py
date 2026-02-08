@@ -1431,7 +1431,7 @@ class ChecklistRunner:
 
     def _execute_single_command(self, part: str) -> Optional[Dict]:
         """Execute a single command string (set:, cmd:, or phrase lookup)."""
-        from .script_executor import ScriptExecutor
+        from .command_executor import execute_command_script
 
         part = part.strip()
         if not part:
@@ -1580,8 +1580,7 @@ class ChecklistRunner:
                 cmd = self.commands_loader.get_command(cmd_key.upper())
                 if cmd and cmd.script:
                     self._log.append(f"Command (override key): {cmd_key}")
-                    executor = ScriptExecutor(self.client)
-                    result = executor.execute(cmd.script, {})
+                    result = execute_command_script(self.client, cmd.script, {})
                     return {
                         "command": cmd_key,
                         "commands_sent": result.get("commands_sent", []),
@@ -1597,8 +1596,7 @@ class ChecklistRunner:
                 self.commands_loader.find_command_for_input(part)
             if best_cmd and best_cmd.script:
                 self._log.append(f"Command: {' '.join(matched_tokens)}")
-                executor = ScriptExecutor(self.client)
-                result = executor.execute(best_cmd.script, operands)
+                result = execute_command_script(self.client, best_cmd.script, operands)
                 return {
                     "command": ' '.join(matched_tokens),
                     "commands_sent": result.get("commands_sent", []),
@@ -1610,7 +1608,7 @@ class ChecklistRunner:
     def _try_execute_command(self, item: ChecklistItem) -> Optional[Dict]:
         if not self.commands_loader:
             return None
-        from .script_executor import ScriptExecutor
+        from .command_executor import execute_command_script
 
         # Use command_override if set (from CSV/XLSX)
         if item.command_override:
@@ -1642,8 +1640,7 @@ class ChecklistRunner:
             self.commands_loader.find_command_for_input(text)
         if best_cmd and best_cmd.script:
             self._log.append(f"Command: {' '.join(matched_tokens)}")
-            executor = ScriptExecutor(self.client)
-            result = executor.execute(best_cmd.script, operands)
+            result = execute_command_script(self.client, best_cmd.script, operands)
             return {
                 "command": ' '.join(matched_tokens),
                 "commands_sent": result.get("commands_sent", []),
