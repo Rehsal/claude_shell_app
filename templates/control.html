@@ -1,0 +1,1479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #fff;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Top bar */
+        .top-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 16px;
+            background: #0f3460;
+            border-bottom: 1px solid #374151;
+            flex-shrink: 0;
+        }
+
+        .top-bar h1 {
+            font-size: 1.1rem;
+            color: #e94560;
+        }
+
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #f87171;
+        }
+        .status-dot.connected { background: #4ade80; }
+
+        .spacer { flex: 1; }
+
+        .ann-label {
+            font-size: 0.72rem;
+            color: #6b7280;
+        }
+        .ann-label.active { color: #4ade80; }
+
+        .ann-toggle {
+            position: relative;
+            width: 32px;
+            height: 16px;
+            background: #374151;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .ann-toggle.on { background: #10b981; }
+        .ann-toggle::after {
+            content: '';
+            position: absolute;
+            top: 2px; left: 2px;
+            width: 12px; height: 12px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+        .ann-toggle.on::after { transform: translateX(16px); }
+
+        .btn {
+            padding: 5px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: white;
+        }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-primary { background: #e94560; }
+        .btn-primary:hover:not(:disabled) { background: #ff6b6b; }
+        .btn-secondary { background: #374151; }
+        .btn-secondary:hover:not(:disabled) { background: #4b5563; }
+        .btn-success { background: #10b981; }
+        .btn-success:hover:not(:disabled) { background: #34d399; }
+        .btn-warning { background: #f59e0b; color: #000; }
+        .btn-warning:hover:not(:disabled) { background: #fbbf24; }
+        .btn-danger { background: #ef4444; }
+        .btn-danger:hover:not(:disabled) { background: #f87171; }
+
+        /* Section dividers */
+        .section-label {
+            font-size: 0.6rem;
+            font-weight: 700;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 5px 16px 3px;
+            background: #16213e;
+        }
+
+        /* Voice commands section - compact single row */
+        .voice-section {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 16px;
+            background: #16213e;
+            border-bottom: 1px solid #374151;
+            flex-shrink: 0;
+        }
+
+        .ptt-btn {
+            width: 38px; height: 38px;
+            border-radius: 50%;
+            border: 2px solid #374151;
+            background: #1a1a2e;
+            color: #94a3b8;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: all 0.2s;
+        }
+        .ptt-btn:hover { border-color: #e94560; color: #e94560; }
+        .ptt-btn.listening {
+            border-color: #10b981;
+            background: rgba(16,185,129,0.2);
+            color: #10b981;
+            animation: pulse 1s infinite;
+        }
+        .ptt-btn.processing {
+            border-color: #fbbf24;
+            background: rgba(251,191,36,0.15);
+            color: #fbbf24;
+        }
+        .ptt-btn.muted {
+            border-color: #f87171;
+            background: rgba(248,113,113,0.15);
+            color: #f87171;
+            opacity: 0.7;
+        }
+        .ptt-btn svg { width: 18px; height: 18px; }
+
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
+            50% { box-shadow: 0 0 0 8px rgba(16,185,129,0); }
+        }
+
+        .voice-info {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .voice-status { font-size: 0.68rem; color: #64748b; }
+        .voice-status.listening { color: #4ade80; }
+        .voice-status.processing { color: #fbbf24; }
+        .voice-result {
+            font-size: 0.82rem;
+            color: #e2e8f0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .voice-result.ok { color: #4ade80; }
+        .voice-result.warn { color: #fbbf24; }
+        .voice-result.fail { color: #f87171; }
+
+        .voice-toggles {
+            display: flex;
+            gap: 6px;
+            flex-shrink: 0;
+            align-items: center;
+        }
+
+        .toggle-label {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            font-size: 0.68rem;
+            color: #9ca3af;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .toggle-label input { width: 13px; height: 13px; }
+
+        .ai-toggle-box {
+            background: rgba(124,58,237,0.2);
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid #7c3aed;
+        }
+        .ai-toggle-box.unavailable {
+            opacity: 0.5;
+            border-color: #374151;
+            background: transparent;
+        }
+        .ai-toggle-box .ai-label { color: #a78bfa; }
+        .ai-toggle-box.unavailable .ai-label { color: #64748b; }
+
+        /* Checklist section */
+        .checklist-load-bar {
+            display: flex;
+            gap: 6px;
+            padding: 6px 16px;
+            background: #16213e;
+            border-bottom: 1px solid #374151;
+            flex-shrink: 0;
+            align-items: center;
+        }
+        .checklist-load-bar input[type="text"] {
+            flex: 1;
+            padding: 4px 8px;
+            background: #1a1a2e;
+            border: 1px solid #374151;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 0.75rem;
+        }
+        .checklist-load-bar input[type="text"]:focus { outline: none; border-color: #e94560; }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            color: #9ca3af;
+            font-size: 0.68rem;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .checkbox-label input { width: 13px; height: 13px; }
+
+        /* Checklist grid */
+        .checklist-grid-wrap {
+            padding: 6px 16px;
+            background: #16213e;
+            border-bottom: 1px solid #374151;
+            flex-shrink: 0;
+            display: none;
+        }
+        .checklist-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        .cl-chip {
+            padding: 3px 8px;
+            border: 1px solid #374151;
+            border-radius: 12px;
+            background: #1a1a2e;
+            color: #e2e8f0;
+            cursor: pointer;
+            font-size: 0.68rem;
+            font-weight: 600;
+            transition: all 0.15s;
+        }
+        .cl-chip:hover { border-color: #e94560; background: #0f3460; }
+        .cl-chip.active { border-color: #e94560; background: #0f3460; }
+        .cl-chip.completed { border-color: #10b981; color: #10b981; }
+
+        /* Mode bar */
+        .mode-bar {
+            display: none;
+            gap: 6px;
+            padding: 5px 16px;
+            background: #0f3460;
+            border-bottom: 1px solid #374151;
+            flex-shrink: 0;
+            align-items: center;
+        }
+        .mode-bar label {
+            font-size: 0.65rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .mode-btn {
+            padding: 3px 10px;
+            border: 1px solid #374151;
+            border-radius: 3px;
+            background: #1a1a2e;
+            color: #e2e8f0;
+            cursor: pointer;
+            font-size: 0.7rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .mode-btn:hover { border-color: #e94560; }
+        .mode-btn.active { border-color: #e94560; background: #e94560; color: white; }
+
+        .runner-badge {
+            font-size: 0.65rem;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 3px;
+        }
+        .runner-badge.idle { color: #94a3b8; background: #374151; }
+        .runner-badge.running { color: #4ade80; background: rgba(74,222,128,0.15); }
+        .runner-badge.paused { color: #fbbf24; background: rgba(251,191,36,0.15); }
+        .runner-badge.waiting_confirm { color: #f59e0b; background: rgba(245,158,11,0.15); }
+        .runner-badge.completed { color: #4ade80; background: rgba(74,222,128,0.2); }
+
+        /* Progress bar */
+        .progress-strip { height: 3px; background: #374151; flex-shrink: 0; }
+        .progress-strip .fill { height: 100%; background: #e94560; transition: width 0.3s; width: 0%; }
+
+        /* FMS section */
+        .fms-bar {
+            display: flex;
+            gap: 6px;
+            padding: 6px 16px;
+            background: #16213e;
+            border-bottom: 1px solid #374151;
+            flex-shrink: 0;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .fms-bar input[type="text"] {
+            width: 90px;
+            padding: 4px 8px;
+            background: #1a1a2e;
+            border: 1px solid #374151;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 0.75rem;
+        }
+        .fms-bar input[type="text"]:focus { outline: none; border-color: #e94560; }
+
+        .ofp-mini {
+            font-size: 0.72rem;
+            color: #94a3b8;
+            display: none;
+            gap: 8px;
+            align-items: center;
+        }
+        .ofp-mini.show { display: flex; }
+        .ofp-mini .val { color: #4ade80; font-weight: 500; }
+
+        .fms-pages {
+            display: flex;
+            gap: 4px;
+            padding: 6px 16px;
+            background: #16213e;
+            border-bottom: 1px solid #374151;
+            flex-shrink: 0;
+            flex-wrap: wrap;
+            align-items: center;
+            display: none;
+        }
+        .fms-pages.show { display: flex; }
+
+        .fms-page-btn {
+            padding: 4px 8px;
+            border: 1px solid #374151;
+            border-radius: 3px;
+            background: #1a1a2e;
+            color: #e2e8f0;
+            cursor: pointer;
+            font-size: 0.68rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .fms-page-btn:hover { border-color: #e94560; background: #0f3460; }
+        .fms-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .fms-page-btn.status-running {
+            border-color: #4ade80;
+            animation: pulse-border 1.2s ease-in-out infinite;
+        }
+        .fms-page-btn.status-completed {
+            background: #166534;
+            border-color: #4ade80;
+            color: #4ade80;
+        }
+        .fms-page-btn.status-error {
+            background: #7f1d1d;
+            border-color: #f87171;
+            color: #f87171;
+        }
+
+        @keyframes pulse-border {
+            0%, 100% { border-color: #4ade80; box-shadow: 0 0 2px rgba(74,222,128,0.3); }
+            50% { border-color: #86efac; box-shadow: 0 0 8px rgba(74,222,128,0.5); }
+        }
+
+        .fms-progress {
+            height: 3px;
+            background: #374151;
+            flex-shrink: 0;
+        }
+        .fms-progress .fill {
+            height: 100%;
+            background: #4ade80;
+            transition: width 0.3s;
+            width: 0%;
+        }
+
+        .fms-badge {
+            font-size: 0.6rem;
+            font-weight: 600;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        .fms-badge.idle { color: #94a3b8; background: #374151; }
+        .fms-badge.running { color: #4ade80; background: rgba(74,222,128,0.15); }
+        .fms-badge.completed { color: #4ade80; background: rgba(74,222,128,0.2); }
+        .fms-badge.error { color: #f87171; background: rgba(248,113,113,0.15); }
+        .fms-badge.stopped { color: #fbbf24; background: rgba(251,191,36,0.15); }
+
+        /* Scrolling checklist items */
+        .items-scroll {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 16px;
+        }
+
+        .section-header {
+            font-size: 0.68rem;
+            font-weight: 700;
+            color: #e94560;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 8px 0 3px;
+            border-bottom: 1px solid #374151;
+            margin-bottom: 2px;
+        }
+        .section-header:first-child { padding-top: 0; }
+
+        .item-row {
+            display: flex;
+            align-items: center;
+            padding: 3px 8px;
+            margin: 1px 0;
+            border-radius: 4px;
+            gap: 7px;
+            font-size: 0.78rem;
+        }
+        .item-row.current { background: #0f3460; border-left: 3px solid #e94560; }
+        .item-row.waiting { background: #3a2a0e; border-left: 3px solid #f59e0b; }
+        .item-row.void { color: #64748b; }
+        .item-row.done { color: #94a3b8; }
+
+        .item-icon {
+            width: 16px; height: 16px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            font-size: 0.55rem;
+            font-weight: 700;
+        }
+        .icon-check { background: #10b981; color: #fff; }
+        .icon-void { background: #374151; color: #64748b; }
+        .icon-skip { background: #64748b; color: #fff; }
+        .icon-current { background: #e94560; color: #fff; }
+        .icon-waiting { background: #f59e0b; color: #000; }
+        .icon-pending { background: #374151; color: #94a3b8; }
+        .icon-error { background: #f87171; color: #fff; }
+        .icon-confirm { background: #4ade80; color: #000; }
+        .icon-remark { background: transparent; color: #94a3b8; }
+
+        .item-label { flex: 1; }
+        .item-label .checked { color: #4ade80; margin-left: 6px; }
+        .item-label .checked.dim { color: #64748b; }
+
+        .empty-state {
+            text-align: center;
+            padding: 30px 16px;
+            color: #64748b;
+        }
+        .empty-state h3 { color: #94a3b8; margin-bottom: 4px; font-size: 0.9rem; }
+
+        /* Bottom bar */
+        .bottom-bar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 16px;
+            background: #16213e;
+            border-top: 1px solid #374151;
+            flex-shrink: 0;
+        }
+        .bottom-bar .confirm-msg {
+            flex: 1;
+            font-size: 0.78rem;
+            color: #fbbf24;
+        }
+        .progress-text {
+            font-size: 0.68rem;
+            color: #64748b;
+        }
+
+        /* Annunciator floating toast */
+        .ann-toast {
+            position: fixed;
+            top: 50px;
+            right: 16px;
+            background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%);
+            border: 2px solid #fca5a5;
+            border-radius: 8px;
+            padding: 10px 18px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 0 20px rgba(248,113,113,0.3);
+            z-index: 1000;
+            display: none;
+            animation: toastIn 0.4s ease-out;
+            max-width: 300px;
+        }
+        .ann-toast.show { display: block; }
+
+        @keyframes toastIn {
+            0% { transform: translateX(100%); opacity: 0; }
+            100% { transform: translateX(0); opacity: 1; }
+        }
+
+        .ann-toast .toast-title {
+            font-size: 0.6rem;
+            font-weight: 600;
+            color: #fca5a5;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 2px;
+        }
+        .ann-toast .toast-msg {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #fff;
+        }
+        .ann-toast .toast-dismiss {
+            position: absolute;
+            top: 4px; right: 6px;
+            background: none;
+            border: none;
+            color: #fca5a5;
+            cursor: pointer;
+            font-size: 1rem;
+            line-height: 1;
+            padding: 2px;
+        }
+        .ann-toast .toast-dismiss:hover { color: #fff; }
+    </style>
+</head>
+<body>
+    <!-- Top bar -->
+    <div class="top-bar">
+        <h1>Control</h1>
+        <div class="status-dot" id="statusDot"></div>
+        <div class="spacer"></div>
+        <span class="ann-label" id="annLabel">ANN</span>
+        <div class="ann-toggle" id="annToggle" onclick="toggleAnnunciator()"></div>
+    </div>
+
+    <!-- Voice commands - compact row -->
+    <div class="section-label">VOICE COMMANDS</div>
+    <div class="voice-section">
+        <button class="ptt-btn" id="pttBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+                <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+        </button>
+        <div class="voice-info">
+            <div class="voice-status" id="voiceStatus">Hold mic or enable Continuous</div>
+            <div class="voice-result" id="voiceResult"></div>
+        </div>
+        <div class="voice-toggles">
+            <label class="toggle-label ai-toggle-box" id="aiToggleBox">
+                <input type="checkbox" id="aiCopilot">
+                <span class="ai-label">AI</span>
+            </label>
+            <label class="toggle-label">
+                <input type="checkbox" id="continuousListen" onchange="toggleContinuous()">
+                Cont
+            </label>
+            <label class="toggle-label">
+                <input type="checkbox" id="speakResponse" checked>
+                Spk
+            </label>
+        </div>
+    </div>
+
+    <!-- FMS section -->
+    <div class="section-label">FMS</div>
+    <div class="fms-bar">
+        <input type="text" id="pilotId" placeholder="Pilot ID">
+        <button class="btn btn-primary" id="fetchBtn" onclick="fetchSimbrief()">Fetch</button>
+        <div class="ofp-mini" id="ofpMini">
+            <span id="ofpRoute"></span>
+            <span>FL<span class="val" id="ofpFL"></span></span>
+            <span>CI<span class="val" id="ofpCI"></span></span>
+        </div>
+        <div class="spacer"></div>
+        <span class="fms-badge idle" id="fmsBadge">IDLE</span>
+    </div>
+    <div class="fms-pages" id="fmsPages">
+        <button class="fms-page-btn" onclick="fmsProgramPage('uplink')" id="fms_btn_uplink">UPL</button>
+        <button class="fms-page-btn" onclick="fmsProgramPage('init_ref')" id="fms_btn_init_ref">INIT</button>
+        <button class="fms-page-btn" onclick="fmsProgramPage('route')" id="fms_btn_route">RTE</button>
+        <button class="fms-page-btn" onclick="fmsProgramPage('dep_arr')" id="fms_btn_dep_arr">D/A</button>
+        <button class="fms-page-btn" onclick="fmsProgramPage('perf_init')" id="fms_btn_perf_init">PERF</button>
+        <button class="fms-page-btn" onclick="fmsProgramPage('n1_limit')" id="fms_btn_n1_limit">N1</button>
+        <button class="fms-page-btn" onclick="fmsProgramPage('takeoff_ref')" id="fms_btn_takeoff_ref">T/O</button>
+        <button class="fms-page-btn" onclick="fmsProgramPage('vnav')" id="fms_btn_vnav">VNAV</button>
+        <button class="fms-page-btn" onclick="fmsProgramPage('legs')" id="fms_btn_legs">LEGS</button>
+        <button class="btn btn-success" onclick="fmsProgramAll()" style="font-size:0.68rem;padding:4px 10px;">ALL</button>
+        <div class="spacer"></div>
+        <button class="btn btn-danger" onclick="fmsStop()" style="font-size:0.65rem;padding:3px 8px;">Stop</button>
+        <button class="btn btn-warning" onclick="fmsClear()" style="font-size:0.65rem;padding:3px 8px;">Clear</button>
+    </div>
+    <div class="fms-progress" id="fmsProgressWrap" style="display:none"><div class="fill" id="fmsProgressFill"></div></div>
+
+    <!-- Checklist section -->
+    <div class="section-label">CHECKLIST</div>
+    <div class="checklist-load-bar">
+        <input type="text" id="clistPath" placeholder="Checklist path (blank = auto-detect)">
+        <button class="btn btn-primary" onclick="loadChecklist()">Load</button>
+        <label class="checkbox-label">
+            <input type="checkbox" id="chkAutoContinue" checked onchange="toggleAutoContinue(this.checked)"> Auto
+        </label>
+        <label class="checkbox-label">
+            <input type="checkbox" id="chkSpeech" checked onchange="toggleSpeech(this.checked)"> TTS
+        </label>
+    </div>
+
+    <!-- Checklist chip grid -->
+    <div class="checklist-grid-wrap" id="gridWrap">
+        <div class="checklist-grid" id="checklistGrid"></div>
+    </div>
+
+    <!-- Mode bar -->
+    <div class="mode-bar" id="modeBar">
+        <label>MODE:</label>
+        <button class="mode-btn" id="btnModeStep" onclick="setMode('step')">Step</button>
+        <button class="mode-btn active" id="btnModeRun" onclick="setMode('run')">Run</button>
+        <button class="mode-btn" id="btnModeSeries" onclick="setMode('series')">Series</button>
+        <div class="spacer"></div>
+        <span class="runner-badge idle" id="runnerBadge">IDLE</span>
+    </div>
+
+    <!-- Progress -->
+    <div class="progress-strip"><div class="fill" id="progressFill"></div></div>
+
+    <!-- Scrolling items -->
+    <div class="items-scroll" id="itemsScroll">
+        <div class="empty-state">
+            <h3>No Checklist Loaded</h3>
+            <p>Load a checklist file to begin</p>
+        </div>
+    </div>
+
+    <!-- Bottom bar -->
+    <div class="bottom-bar">
+        <span class="confirm-msg" id="confirmMsg" style="display:none;"></span>
+        <button class="btn btn-success" id="btnConfirm" onclick="confirmItem()" style="display:none;">Confirm</button>
+        <button class="btn btn-secondary" id="btnSkip" onclick="skipItem()" disabled>Skip</button>
+        <button class="btn btn-warning" id="btnPause" onclick="togglePause()" disabled>Pause</button>
+        <button class="btn btn-secondary" id="btnRestart" onclick="restartChecklist()" disabled>Restart</button>
+        <div class="spacer"></div>
+        <span class="progress-text" id="progressText"></span>
+    </div>
+
+    <!-- Annunciator toast -->
+    <div class="ann-toast" id="annToast">
+        <button class="toast-dismiss" onclick="dismissToast()">&times;</button>
+        <div class="toast-title">ANNUNCIATOR</div>
+        <div class="toast-msg" id="toastMsg"></div>
+    </div>
+
+    <script>
+        // ---- State ----
+        let connected = false;
+        let loaded = false;
+        let lastHistoryLen = 0;
+        let clPollTimer = null;
+        let paused = false;
+        let currentMode = 'run';
+        let selectedChecklist = null;
+        let allChecklists = [];
+        let completedChecklists = new Set();
+
+        // Annunciator
+        let annunciatorEnabled = false;
+        let annunciatorMonitorActive = false;
+        let toastTimeout = null;
+
+        // AI
+        let aiAvailable = false;
+
+        // Speech
+        let isSpeaking = false;
+        let speechQueue = [];
+        let isSpeakingQueue = false;
+
+        // Voice continuous mode
+        let continuousMode = false;
+        let isListening = false;
+
+        // FMS
+        let fmsRunning = false;
+        let fmsWasRunning = false;
+        let fmsPageQueue = [];
+        let fmsLastLogLen = 0;
+
+        const FMS_PAGE_BTNS = {
+            'uplink': 'fms_btn_uplink',
+            'efb_load': 'fms_btn_uplink',
+            'init_ref': 'fms_btn_init_ref',
+            'route': 'fms_btn_route',
+            'dep_arr': 'fms_btn_dep_arr',
+            'perf_init': 'fms_btn_perf_init',
+            'n1_limit': 'fms_btn_n1_limit',
+            'takeoff_ref': 'fms_btn_takeoff_ref',
+            'vnav': 'fms_btn_vnav',
+            'legs': 'fms_btn_legs',
+        };
+
+        // ---- Init ----
+        document.addEventListener('DOMContentLoaded', async () => {
+            await checkConnection();
+            setInterval(checkConnection, 10000);
+            checkAiAvailability();
+
+            // Version auto-refresh
+            const pv = document.querySelector('meta[name="server-version"]')?.content || '';
+            if (pv) {
+                setInterval(async () => {
+                    try {
+                        const r = await fetch('/api/version');
+                        const d = await r.json();
+                        if (d.version !== pv) location.reload();
+                    } catch {}
+                }, 5000);
+            }
+
+            // Annunciator
+            setTimeout(initAnnunciators, 2000);
+            setInterval(pollAnnunciatorAlert, 500);
+            setInterval(checkAnnunciatorStatus, 5000);
+
+            // FMS - load saved pilot ID, check cached data, start polling
+            const savedPid = localStorage.getItem('fms_pilot_id') || '77708';
+            document.getElementById('pilotId').value = savedPid;
+            checkFmsCachedData();
+            setInterval(pollFmsStatus, 500);
+        });
+
+        // ---- Connection ----
+        async function checkConnection() {
+            try {
+                const r = await fetch('/api/extplane/status');
+                const d = await r.json();
+                const was = connected;
+                connected = d.connected;
+                document.getElementById('statusDot').className = 'status-dot' + (connected ? ' connected' : '');
+                if (!connected && !was) {
+                    await fetch('/api/extplane/connect', { method: 'POST' });
+                    setTimeout(checkConnection, 1000);
+                }
+            } catch {
+                connected = false;
+                document.getElementById('statusDot').className = 'status-dot';
+            }
+        }
+
+        // ---- AI ----
+        async function checkAiAvailability() {
+            try {
+                const r = await fetch('/api/ai/status');
+                const d = await r.json();
+                aiAvailable = d.available;
+                const box = document.getElementById('aiToggleBox');
+                const cb = document.getElementById('aiCopilot');
+                if (aiAvailable) {
+                    box.classList.remove('unavailable');
+                    cb.disabled = false;
+                } else {
+                    box.classList.add('unavailable');
+                    cb.disabled = true;
+                    cb.checked = false;
+                }
+            } catch { aiAvailable = false; }
+        }
+
+        // ---- Voice (PTT + Continuous) ----
+        let recognition = null;
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SR();
+            recognition.continuous = false;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+
+            recognition.onstart = () => {
+                isListening = true;
+                document.getElementById('pttBtn').classList.add('listening');
+                document.getElementById('voiceStatus').textContent = 'Listening...';
+                document.getElementById('voiceStatus').className = 'voice-status listening';
+            };
+
+            recognition.onresult = (event) => {
+                let interim = '', final = '';
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const t = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) final += t;
+                    else interim += t;
+                }
+                if (interim) {
+                    document.getElementById('voiceResult').textContent = interim;
+                    document.getElementById('voiceResult').className = 'voice-result';
+                }
+                if (final) {
+                    document.getElementById('voiceResult').textContent = final;
+                    processVoiceCommand(final.trim());
+                }
+            };
+
+            recognition.onerror = (event) => {
+                isListening = false;
+                document.getElementById('pttBtn').classList.remove('listening');
+                if (event.error !== 'no-speech' && event.error !== 'aborted') {
+                    document.getElementById('voiceStatus').textContent = 'Error: ' + event.error;
+                    document.getElementById('voiceStatus').className = 'voice-status';
+                }
+            };
+
+            recognition.onend = () => {
+                isListening = false;
+                document.getElementById('pttBtn').classList.remove('listening');
+                // Restart in continuous mode
+                if (!isSpeaking && continuousMode) {
+                    setTimeout(startListeningIfContinuous, 100);
+                } else if (!continuousMode) {
+                    document.getElementById('voiceStatus').textContent = 'Hold mic or enable Continuous';
+                    document.getElementById('voiceStatus').className = 'voice-status';
+                }
+            };
+        }
+
+        const pttBtn = document.getElementById('pttBtn');
+        if (recognition) {
+            pttBtn.addEventListener('mousedown', () => {
+                document.getElementById('voiceResult').textContent = '';
+                document.getElementById('voiceResult').className = 'voice-result';
+                try { recognition.start(); } catch {}
+            });
+            pttBtn.addEventListener('mouseup', () => { recognition.stop(); });
+            pttBtn.addEventListener('mouseleave', () => {
+                if (pttBtn.classList.contains('listening') && !continuousMode) recognition.stop();
+            });
+            pttBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                document.getElementById('voiceResult').textContent = '';
+                try { recognition.start(); } catch {}
+            });
+            pttBtn.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                recognition.stop();
+            });
+        } else {
+            pttBtn.style.display = 'none';
+        }
+
+        function toggleContinuous() {
+            continuousMode = document.getElementById('continuousListen').checked;
+            if (continuousMode) {
+                recognition.continuous = true;
+                if (!isListening) {
+                    try { recognition.start(); } catch {}
+                }
+            } else {
+                recognition.continuous = false;
+                if (isListening) recognition.stop();
+            }
+        }
+
+        function startListeningIfContinuous() {
+            if (continuousMode && !isListening && !isSpeaking) {
+                try {
+                    recognition.continuous = true;
+                    recognition.start();
+                } catch {}
+            }
+        }
+
+        async function processVoiceCommand(text) {
+            const ptt = document.getElementById('pttBtn');
+            ptt.classList.remove('listening');
+            ptt.classList.add('processing');
+            document.getElementById('voiceStatus').textContent = 'Processing...';
+            document.getElementById('voiceStatus').className = 'voice-status processing';
+
+            const useAi = document.getElementById('aiCopilot').checked && aiAvailable;
+
+            try {
+                const fd = new FormData();
+                fd.append('text', text);
+                const endpoint = useAi ? '/api/ai/execute' : '/api/extplane/execute';
+                const r = await fetch(endpoint, { method: 'POST', body: fd });
+                const data = await r.json();
+
+                const resultEl = document.getElementById('voiceResult');
+                let responseText = '';
+                let cls = 'voice-result';
+                let shouldSpeak = true;
+
+                const fmt = (interp) => Array.isArray(interp) ? interp.join(' and ') : interp;
+
+                if (data.status === 'verified') {
+                    cls += ' ok';
+                    responseText = useAi && data.interpreted
+                        ? `${fmt(data.interpreted)} verified`
+                        : data.matched_tokens
+                            ? `${data.matched_tokens.join(' ').replace(/_/g, ' ')} verified`
+                            : 'Command verified';
+                } else if (data.status === 'sent') {
+                    cls += ' warn';
+                    responseText = useAi && data.interpreted
+                        ? `${fmt(data.interpreted)} sent`
+                        : data.matched_tokens
+                            ? `${data.matched_tokens.join(' ').replace(/_/g, ' ')} sent`
+                            : 'Command sent';
+                } else if (data.status === 'partial') {
+                    cls += ' warn';
+                    responseText = data.succeeded?.length
+                        ? `${data.succeeded.join(' and ')} executed`
+                        : 'Partial';
+                } else {
+                    cls += ' fail';
+                    responseText = 'Not recognized';
+                    shouldSpeak = false;
+                }
+
+                resultEl.textContent = responseText;
+                resultEl.className = cls;
+
+                const statusMsg = continuousMode ? 'Listening...' : 'Hold mic or enable Continuous';
+                document.getElementById('voiceStatus').textContent = statusMsg;
+                document.getElementById('voiceStatus').className = continuousMode ? 'voice-status listening' : 'voice-status';
+
+                if (document.getElementById('speakResponse').checked && shouldSpeak && responseText) {
+                    speakVoice(responseText);
+                } else if (continuousMode) {
+                    setTimeout(startListeningIfContinuous, 300);
+                }
+            } catch (e) {
+                document.getElementById('voiceResult').textContent = 'Error';
+                document.getElementById('voiceResult').className = 'voice-result fail';
+                if (continuousMode) setTimeout(startListeningIfContinuous, 1000);
+            }
+
+            ptt.classList.remove('processing');
+        }
+
+        function speakVoice(text) {
+            if (!window.speechSynthesis) return;
+            isSpeaking = true;
+            const ptt = document.getElementById('pttBtn');
+            if (isListening) recognition.stop();
+            ptt.classList.add('muted');
+            document.getElementById('voiceStatus').textContent = 'Speaking...';
+
+            speechSynthesis.cancel();
+            const u = new SpeechSynthesisUtterance(text);
+            u.rate = 1.1;
+            u.onend = () => {
+                isSpeaking = false;
+                ptt.classList.remove('muted');
+                if (continuousMode) {
+                    setTimeout(startListeningIfContinuous, 300);
+                } else {
+                    document.getElementById('voiceStatus').textContent = 'Hold mic or enable Continuous';
+                    document.getElementById('voiceStatus').className = 'voice-status';
+                }
+            };
+            u.onerror = () => {
+                isSpeaking = false;
+                ptt.classList.remove('muted');
+                if (continuousMode) startListeningIfContinuous();
+            };
+            speechSynthesis.speak(u);
+        }
+
+        // ---- FMS ----
+        async function fetchSimbrief() {
+            const pid = document.getElementById('pilotId').value.trim();
+            if (!pid) return alert('Enter a SimBrief Pilot ID');
+            localStorage.setItem('fms_pilot_id', pid);
+
+            const btn = document.getElementById('fetchBtn');
+            btn.disabled = true;
+            btn.textContent = '...';
+
+            try {
+                const body = new URLSearchParams({ pilot_id: pid });
+                const r = await fetch('/api/fms/simbrief/fetch', { method: 'POST', body });
+                const d = await r.json();
+                if (!r.ok) throw new Error(d.detail || 'Fetch failed');
+                showOFPMini(d);
+            } catch (e) {
+                alert('SimBrief: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Fetch';
+            }
+        }
+
+        async function checkFmsCachedData() {
+            try {
+                const r = await fetch('/api/fms/simbrief/data');
+                const d = await r.json();
+                if (d.status === 'ok') showOFPMini(d);
+            } catch {}
+        }
+
+        function showOFPMini(d) {
+            const el = document.getElementById('ofpMini');
+            document.getElementById('ofpRoute').innerHTML =
+                `<span class="val">${d.origin}</span>→<span class="val">${d.destination}</span>`;
+            document.getElementById('ofpFL').textContent = Math.round((d.cruise_altitude || 0) / 100);
+            document.getElementById('ofpCI').textContent = d.cost_index;
+            el.classList.add('show');
+
+            // Show page buttons
+            document.getElementById('fmsPages').classList.add('show');
+            document.getElementById('fmsProgressWrap').style.display = 'block';
+        }
+
+        async function fmsProgramAll() {
+            try {
+                const r = await fetch('/api/fms/program', { method: 'POST' });
+                const d = await r.json();
+                if (!r.ok) alert(d.detail || 'Start failed');
+            } catch (e) { alert('Error: ' + e.message); }
+        }
+
+        async function fmsProgramPage(page) {
+            if (fmsRunning) {
+                if (!fmsPageQueue.includes(page)) {
+                    fmsPageQueue.push(page);
+                    const btnId = FMS_PAGE_BTNS[page];
+                    if (btnId) document.getElementById(btnId)?.classList.add('status-running');
+                }
+                return;
+            }
+            try {
+                const r = await fetch(`/api/fms/program/${page}`, { method: 'POST' });
+                const d = await r.json();
+                if (!r.ok) alert(d.detail || 'Start failed');
+            } catch (e) { alert('Error: ' + e.message); }
+        }
+
+        async function fmsProcessQueue() {
+            if (fmsPageQueue.length === 0) return;
+            const next = fmsPageQueue.shift();
+            try {
+                const r = await fetch(`/api/fms/program/${next}`, { method: 'POST' });
+                if (!r.ok) fmsPageQueue = [];
+            } catch { fmsPageQueue = []; }
+        }
+
+        async function fmsStop() {
+            fmsPageQueue = [];
+            try { await fetch('/api/fms/stop', { method: 'POST' }); } catch {}
+        }
+
+        async function fmsClear() {
+            fmsPageQueue = [];
+            try {
+                await fetch('/api/fms/reset', { method: 'POST' });
+                document.querySelectorAll('.fms-page-btn').forEach(b =>
+                    b.classList.remove('status-running', 'status-completed', 'status-error'));
+                document.getElementById('fmsProgressFill').style.width = '0%';
+            } catch {}
+        }
+
+        async function pollFmsStatus() {
+            try {
+                const r = await fetch('/api/fms/status');
+                const s = await r.json();
+                updateFmsStatus(s);
+            } catch {}
+        }
+
+        function updateFmsStatus(s) {
+            const badge = document.getElementById('fmsBadge');
+            badge.textContent = s.state.toUpperCase();
+            badge.className = 'fms-badge ' + s.state;
+
+            document.getElementById('fmsProgressFill').style.width = s.progress + '%';
+
+            fmsRunning = s.state === 'running';
+
+            // Process queue when done
+            if (fmsWasRunning && !fmsRunning && fmsPageQueue.length > 0) {
+                fmsProcessQueue();
+            }
+            fmsWasRunning = fmsRunning;
+
+            // Update page button statuses
+            if (s.page_results) {
+                document.querySelectorAll('.fms-page-btn').forEach(b =>
+                    b.classList.remove('status-running', 'status-completed', 'status-error'));
+                for (const [page, status] of Object.entries(s.page_results)) {
+                    const btnId = FMS_PAGE_BTNS[page];
+                    if (!btnId) continue;
+                    const btn = document.getElementById(btnId);
+                    if (!btn) continue;
+                    if (status === 'running') btn.classList.add('status-running');
+                    else if (status === 'completed') btn.classList.add('status-completed');
+                    else if (status === 'error') btn.classList.add('status-error');
+                }
+            }
+
+            // Show pages if we have simbrief data
+            if (s.has_simbrief) {
+                document.getElementById('fmsPages').classList.add('show');
+                document.getElementById('fmsProgressWrap').style.display = 'block';
+            }
+        }
+
+        // ---- Checklist ----
+        async function loadChecklist() {
+            const path = document.getElementById('clistPath').value;
+            const fd = new FormData();
+            fd.append('path', path);
+            try {
+                const r = await fetch('/api/checklist/load', { method: 'POST', body: fd });
+                if (!r.ok) { const e = await r.json(); alert(e.detail || 'Failed'); return; }
+                const d = await r.json();
+                loaded = true;
+                allChecklists = d.checklists;
+                completedChecklists.clear();
+                renderGrid();
+                document.getElementById('gridWrap').style.display = 'block';
+                document.getElementById('modeBar').style.display = 'flex';
+                document.getElementById('itemsScroll').innerHTML =
+                    `<div class="empty-state"><h3>Loaded ${d.checklists.length} checklists</h3><p>Select one to begin</p></div>`;
+                startClPolling();
+            } catch (e) { alert('Error: ' + e.message); }
+        }
+
+        function renderGrid() {
+            const g = document.getElementById('checklistGrid');
+            g.innerHTML = '';
+            allChecklists.forEach(name => {
+                const chip = document.createElement('button');
+                chip.className = 'cl-chip';
+                if (completedChecklists.has(name)) chip.classList.add('completed');
+                if (selectedChecklist === name) chip.classList.add('active');
+                chip.textContent = name;
+                chip.onclick = () => selectAndStart(name);
+                g.appendChild(chip);
+            });
+        }
+
+        function selectAndStart(name) {
+            selectedChecklist = name;
+            renderGrid();
+            if (currentMode === 'step') startChecklist(name, false);
+            else if (currentMode === 'series') startSeries(name);
+            else startChecklist(name, true);
+        }
+
+        async function startChecklist(name, autoRun) {
+            const fd = new FormData();
+            fd.append('name', name);
+            fd.append('auto_run', autoRun ? 'true' : 'false');
+            await fetch('/api/checklist/start', { method: 'POST', body: fd });
+            lastHistoryLen = 0;
+            document.getElementById('itemsScroll').innerHTML = '';
+            document.getElementById('btnRestart').disabled = false;
+            startClPolling();
+        }
+
+        async function startSeries(name) {
+            const fd = new FormData();
+            fd.append('start', name);
+            await fetch('/api/checklist/run_series', { method: 'POST', body: fd });
+            lastHistoryLen = 0;
+            document.getElementById('itemsScroll').innerHTML = '';
+            document.getElementById('btnRestart').disabled = false;
+            startClPolling();
+        }
+
+        function setMode(mode) {
+            currentMode = mode;
+            document.getElementById('btnModeStep').classList.toggle('active', mode === 'step');
+            document.getElementById('btnModeRun').classList.toggle('active', mode === 'run');
+            document.getElementById('btnModeSeries').classList.toggle('active', mode === 'series');
+        }
+
+        async function restartChecklist() {
+            lastHistoryLen = 0;
+            document.getElementById('itemsScroll').innerHTML = '';
+            await fetch('/api/checklist/restart', { method: 'POST' });
+            startClPolling();
+        }
+
+        async function confirmItem() { await fetch('/api/checklist/confirm', { method: 'POST' }); }
+        async function skipItem() { await fetch('/api/checklist/skip', { method: 'POST' }); }
+
+        async function togglePause() {
+            if (paused) await fetch('/api/checklist/resume', { method: 'POST' });
+            else await fetch('/api/checklist/pause', { method: 'POST' });
+        }
+
+        async function toggleSpeech(enabled) {
+            const fd = new FormData();
+            if (enabled) fd.append('enabled', 'true');
+            await fetch('/api/checklist/speech', { method: 'POST', body: fd });
+        }
+
+        async function toggleAutoContinue(enabled) {
+            const fd = new FormData();
+            if (enabled) fd.append('enabled', 'true');
+            await fetch('/api/checklist/auto_continue', { method: 'POST', body: fd });
+        }
+
+        // ---- Checklist Polling ----
+        function startClPolling() {
+            if (clPollTimer) return;
+            clPollTimer = setInterval(pollCl, 500);
+            pollCl();
+        }
+
+        async function pollCl() {
+            try {
+                const r = await fetch('/api/checklist/status');
+                const s = await r.json();
+                renderClStatus(s);
+            } catch {}
+        }
+
+        function renderClStatus(s) {
+            if (s.completed_checklists) completedChecklists = new Set(s.completed_checklists);
+            if (s.all_checklists?.length) allChecklists = s.all_checklists;
+            if (allChecklists.length > 0 && loaded) renderGrid();
+            if (s.current_checklist_name) selectedChecklist = s.current_checklist_name;
+
+            const badge = document.getElementById('runnerBadge');
+            badge.textContent = s.state.toUpperCase().replace('_', ' ');
+            badge.className = 'runner-badge ' + s.state;
+
+            document.getElementById('progressFill').style.width = s.progress + '%';
+            document.getElementById('progressText').textContent =
+                s.progress_total > 0 ? `${s.progress_total} items` : '';
+
+            const isRunning = s.state === 'running';
+            const isWaiting = s.state === 'waiting_confirm';
+            const isPaused = s.state === 'paused';
+            paused = isPaused;
+
+            document.getElementById('btnPause').disabled = !isRunning && !isWaiting && !isPaused;
+            document.getElementById('btnPause').textContent = isPaused ? 'Resume' : 'Pause';
+            document.getElementById('btnSkip').disabled = !(isRunning || isWaiting || isPaused);
+
+            if (s.auto_continue !== undefined)
+                document.getElementById('chkAutoContinue').checked = s.auto_continue;
+            if (s.speech_enabled !== undefined)
+                document.getElementById('chkSpeech').checked = s.speech_enabled;
+
+            const confirmMsg = document.getElementById('confirmMsg');
+            const confirmBtn = document.getElementById('btnConfirm');
+            if (s.current_item && (isWaiting || isRunning)) {
+                confirmMsg.style.display = '';
+                confirmMsg.textContent = `${s.current_item.label} — ${s.current_item.checked_text}`;
+                confirmBtn.style.display = '';
+            } else {
+                confirmMsg.style.display = 'none';
+                confirmBtn.style.display = 'none';
+            }
+
+            renderItems(s);
+        }
+
+        function renderItems(s) {
+            const container = document.getElementById('itemsScroll');
+            const history = s.history || [];
+
+            if (history.length > lastHistoryLen) {
+                for (let i = lastHistoryLen; i < history.length; i++) {
+                    const h = history[i];
+                    if (i === 0 || history[i].section !== history[i-1].section) {
+                        const hdr = document.createElement('div');
+                        hdr.className = 'section-header';
+                        hdr.textContent = h.section || 'CHECKLIST';
+                        container.appendChild(hdr);
+                    }
+                    container.appendChild(makeRow(h));
+                    if (h.speak) speakChecklist(h.speak);
+                }
+                lastHistoryLen = history.length;
+            }
+
+            const oldCur = container.querySelector('.item-row.current, .item-row.waiting');
+            if (oldCur && oldCur.id === '__current') oldCur.remove();
+
+            if (s.current_item && s.state !== 'completed' && s.state !== 'idle') {
+                const row = document.createElement('div');
+                row.className = 'item-row ' + (s.state === 'waiting_confirm' ? 'waiting' : 'current');
+                row.id = '__current';
+                const isWait = s.state === 'waiting_confirm';
+                const iconCls = isWait ? 'icon-waiting' : 'icon-current';
+                const iconChar = isWait ? '?' : '&#9654;';
+                const ci = s.current_item;
+                row.innerHTML = `<div class="item-icon ${iconCls}">${iconChar}</div>
+                    <div class="item-label">${esc(ci.label || ci.continue_target || '')}${ci.checked_text ? `<span class="checked">${esc(ci.checked_text)}</span>` : ''}</div>`;
+                container.appendChild(row);
+                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+
+            if (s.state === 'completed' && !container.querySelector('.completed-marker')) {
+                const done = document.createElement('div');
+                done.className = 'item-row completed-marker';
+                done.style.cssText = 'background:rgba(74,222,128,0.1);border-left:3px solid #4ade80;margin-top:4px;';
+                done.innerHTML = `<div class="item-icon icon-check">&#10003;</div><div class="item-label" style="color:#4ade80;font-weight:600;">Checklist Complete</div>`;
+                container.appendChild(done);
+                done.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+
+        function makeRow(h) {
+            const row = document.createElement('div');
+            const isVoid = h.type === 'sw_itemvoid';
+            const isRemark = h.type === 'sw_remark';
+            const isContinue = h.type === 'sw_continue';
+            const isSkipped = h.status === 'skipped';
+            const isSatisfied = h.status === 'satisfied' || h.status === 'confirmed';
+
+            let cls = 'item-row';
+            if (isVoid || isRemark) cls += ' void';
+            else if (isSatisfied || isSkipped) cls += ' done';
+            row.className = cls;
+
+            let iconCls, iconChar;
+            if (isSatisfied) { iconCls = 'icon-check'; iconChar = '&#10003;'; }
+            else if (isVoid) { iconCls = 'icon-void'; iconChar = '&mdash;'; }
+            else if (isRemark) { iconCls = 'icon-remark'; iconChar = '&#8505;'; }
+            else if (isContinue) { iconCls = 'icon-pending'; iconChar = '&#187;'; }
+            else if (isSkipped) { iconCls = 'icon-skip'; iconChar = '&#8212;'; }
+            else if (h.status === 'timeout') { iconCls = 'icon-skip'; iconChar = '&#8987;'; }
+            else if (h.status === 'error') { iconCls = 'icon-error'; iconChar = '!'; }
+            else { iconCls = 'icon-pending'; iconChar = '?'; }
+
+            const label = h.label || h.continue_target || '';
+            const checked = h.checked_text || '';
+            const dim = isVoid || isRemark;
+
+            row.innerHTML = `<div class="item-icon ${iconCls}">${iconChar}</div>
+                <div class="item-label">${esc(label)}${checked ? `<span class="checked${dim ? ' dim' : ''}">${esc(checked)}</span>` : ''}</div>`;
+            return row;
+        }
+
+        // ---- Checklist TTS ----
+        function speakChecklist(text) {
+            if (!window.speechSynthesis) {
+                fetch('/api/checklist/speech_done', { method: 'POST' });
+                return;
+            }
+            speechQueue.push(text);
+            if (!isSpeakingQueue) speakNext();
+        }
+
+        function speakNext() {
+            if (speechQueue.length === 0) { isSpeakingQueue = false; return; }
+            isSpeakingQueue = true;
+            const text = speechQueue.shift();
+            const u = new SpeechSynthesisUtterance(text);
+            u.rate = 1.1;
+            u.onend = () => { fetch('/api/checklist/speech_done', { method: 'POST' }); speakNext(); };
+            u.onerror = () => { fetch('/api/checklist/speech_done', { method: 'POST' }); speakNext(); };
+            speechSynthesis.speak(u);
+        }
+
+        // ---- Annunciator ----
+        async function initAnnunciators() {
+            try {
+                const fd = new FormData();
+                const r = await fetch('/api/annunciator/load', { method: 'POST', body: fd });
+                const d = await r.json();
+                if (d.status === 'ok' && d.count > 0) console.log(`Loaded ${d.count} annunciators`);
+            } catch (e) { console.log('ANN init:', e.message); }
+        }
+
+        async function toggleAnnunciator() {
+            const newState = !annunciatorEnabled;
+            const fd = new FormData();
+            fd.append('enabled', newState ? 'true' : 'false');
+            try {
+                const r = await fetch('/api/annunciator/toggle', { method: 'POST', body: fd });
+                const d = await r.json();
+                if (d.status === 'ok') {
+                    annunciatorEnabled = d.enabled;
+                    updateAnnUI();
+                    if (annunciatorEnabled && connected)
+                        await fetch('/api/annunciator/start', { method: 'POST' });
+                }
+            } catch {}
+        }
+
+        function updateAnnUI() {
+            const toggle = document.getElementById('annToggle');
+            const label = document.getElementById('annLabel');
+            if (annunciatorEnabled) {
+                toggle.classList.add('on');
+                label.className = 'ann-label active';
+            } else {
+                toggle.classList.remove('on');
+                label.className = 'ann-label';
+            }
+        }
+
+        async function checkAnnunciatorStatus() {
+            try {
+                const r = await fetch('/api/annunciator/status');
+                const d = await r.json();
+                annunciatorMonitorActive = d.running;
+                if (d.enabled !== undefined) annunciatorEnabled = d.enabled;
+                updateAnnUI();
+                if (connected && annunciatorEnabled && !annunciatorMonitorActive && d.annunciator_count > 0)
+                    await fetch('/api/annunciator/start', { method: 'POST' });
+            } catch {}
+        }
+
+        async function pollAnnunciatorAlert() {
+            try {
+                const r = await fetch('/api/annunciator/alert');
+                const d = await r.json();
+                if (d.alert) showToast(d.alert);
+            } catch {}
+        }
+
+        function showToast(alert) {
+            playAlertTone();
+            document.getElementById('toastMsg').textContent = alert.message;
+            document.getElementById('annToast').classList.add('show');
+            if (window.speechSynthesis) {
+                speechSynthesis.cancel();
+                const u = new SpeechSynthesisUtterance(alert.message);
+                speechSynthesis.speak(u);
+            }
+            if (toastTimeout) clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(dismissToast, 5000);
+        }
+
+        function dismissToast() {
+            document.getElementById('annToast').classList.remove('show');
+            if (toastTimeout) { clearTimeout(toastTimeout); toastTimeout = null; }
+        }
+
+        function playAlertTone() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.frequency.value = 880;
+                osc.type = 'sine';
+                gain.gain.value = 0.3;
+                osc.start();
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+                osc.stop(ctx.currentTime + 0.3);
+            } catch {}
+        }
+
+        // ---- Util ----
+        function esc(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+    </script>
+</body>
+</html>
