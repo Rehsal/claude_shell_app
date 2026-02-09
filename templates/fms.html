@@ -271,6 +271,7 @@
             <!-- Stop / Clear -->
             <div class="panel-section">
                 <div class="action-row">
+                    <button class="btn btn-success" id="btnInitFms" onclick="initializeFMS()">Initialize</button>
                     <button class="btn btn-danger" onclick="stopProgramming()">Stop</button>
                     <button class="btn btn-warning" onclick="clearFMS()">Clear FMS</button>
                 </div>
@@ -317,7 +318,7 @@
         };
 
         // Load saved pilot ID
-        const savedPid = localStorage.getItem('fms_pilot_id') || '';
+        const savedPid = localStorage.getItem('fms_pilot_id') || '77708';
         document.getElementById('pilotId').value = savedPid;
 
         // Check for cached data on load
@@ -438,6 +439,43 @@
                 document.getElementById('logContent').innerHTML = '';
                 document.getElementById('progressFill').style.width = '0%';
             } catch (e) {}
+        }
+
+        async function initializeFMS() {
+            const btn = document.getElementById('btnInitFms');
+            btn.disabled = true;
+            btn.textContent = 'Initializing...';
+            try {
+                // 1. Clear queue and stop any running programming
+                pageQueue = [];
+                await fetch('/api/fms/stop', { method: 'POST' });
+
+                // 2. Reset backend state
+                await fetch('/api/fms/reset', { method: 'POST' });
+
+                // 3. Reset frontend
+                resetPageButtons();
+                lastLogLen = 0;
+                document.getElementById('logContent').innerHTML = '';
+                document.getElementById('progressFill').style.width = '0%';
+                document.getElementById('ofpSummary').style.display = 'none';
+
+                // 4. Fetch SimBrief
+                const pid = document.getElementById('pilotId').value.trim() || '77708';
+                localStorage.setItem('fms_pilot_id', pid);
+                const body = new URLSearchParams({ pilot_id: pid });
+                const resp = await fetch('/api/fms/simbrief/fetch', { method: 'POST', body });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || 'SimBrief fetch failed');
+
+                // 5. Display OFP
+                showOFP(data);
+            } catch (e) {
+                alert('Initialize error: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Initialize';
+            }
         }
 
         function resetPageButtons() {

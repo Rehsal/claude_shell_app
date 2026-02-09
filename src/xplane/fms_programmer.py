@@ -762,7 +762,9 @@ class FMSProgrammer:
         # Cost Index -> LSK 3R
         if d.cost_index is not None:
             self._log_msg(f"Entering cost index: {d.cost_index}")
-            self.cdu.enter_value_at_lsk(str(d.cost_index), "R", 3, check_error=True)
+            ok = self.cdu.enter_value_at_lsk(str(d.cost_index), "R", 3, check_error=True)
+            if not ok:
+                self._log_msg("WARNING: Cost index entry failed (CDU error)")
             self._check_stop()
 
         # CRZ ALT -> LSK 1R (raw altitude; FMC may warn "UNABLE CRZ ALT" for low values)

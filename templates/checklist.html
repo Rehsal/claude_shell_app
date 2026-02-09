@@ -583,6 +583,7 @@
         </div>
         <span class="runner-badge idle" id="runnerBadge">IDLE</span>
         <span id="serverVersion" style="color:#6b7280;font-size:0.65rem;margin-left:8px;"></span>
+        <button class="btn btn-success" id="btnInitChecklist" onclick="initializeChecklist()">Initialize</button>
         <button class="btn btn-primary" id="btnRestart" onclick="restartChecklist()" disabled>Restart</button>
     </div>
 
@@ -1219,6 +1220,65 @@
             const form = new FormData();
             if (enabled) form.append('enabled', 'true');
             await fetch('/api/checklist/auto_continue', { method: 'POST', body: form });
+        }
+
+        async function initializeChecklist() {
+            const btn = document.getElementById('btnInitChecklist');
+            btn.disabled = true;
+            btn.textContent = 'Initializing...';
+            try {
+                // 1. Full teardown
+                await fetch('/api/checklist/release', { method: 'POST' });
+
+                // 2. Reset JS state
+                loaded = false;
+                lastHistoryLen = 0;
+                selectedChecklist = null;
+                allChecklists = [];
+                completedChecklists.clear();
+                speechQueue = [];
+                isSpeaking = false;
+
+                // 3. Stop polling
+                if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+
+                // 4. Clear DOM
+                document.getElementById('checklistGrid').innerHTML = '';
+                document.getElementById('checklistGridContainer').style.display = 'none';
+                document.getElementById('modeBar').style.display = 'none';
+                document.getElementById('itemsScroll').innerHTML = '';
+                document.getElementById('progressFill').style.width = '0%';
+                document.getElementById('progressText').textContent = '';
+                document.getElementById('confirmMsg').style.display = 'none';
+                document.getElementById('btnConfirm').style.display = 'none';
+                document.getElementById('logPanel').innerHTML = '';
+                document.getElementById('btnRestart').disabled = true;
+
+                // 5. Load checklist (auto-detect if path empty)
+                const path = document.getElementById('clistPath').value;
+                const fd = new FormData();
+                fd.append('path', path);
+                const r = await fetch('/api/checklist/load', { method: 'POST', body: fd });
+                if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Load failed'); }
+                const d = await r.json();
+
+                // 6. Populate state and UI
+                loaded = true;
+                allChecklists = d.checklists;
+                renderChecklistGrid();
+                document.getElementById('checklistGridContainer').style.display = 'block';
+                document.getElementById('modeBar').style.display = 'flex';
+                document.getElementById('itemsScroll').innerHTML =
+                    `<div class="empty-state"><h3>Loaded ${d.checklists.length} checklists</h3><p>${d.summary || 'Select a checklist to begin'}</p></div>`;
+
+                // 7. Restart polling
+                startPolling();
+            } catch (e) {
+                alert('Initialize error: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Initialize';
+            }
         }
 
         async function releaseChecklist() {
