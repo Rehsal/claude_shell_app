@@ -746,10 +746,10 @@ class FMSProgrammer:
             self.cdu.enter_value_at_lsk(rsv_str, "L", 4, check_error=True)
             self._check_stop()
 
-        # Cost Index -> LSK 3R
+        # Cost Index -> LSK 5L
         if d.cost_index is not None:
             self._log_msg(f"Entering cost index: {d.cost_index}")
-            ok = self.cdu.enter_value_at_lsk(str(d.cost_index), "R", 3, check_error=True)
+            ok = self.cdu.enter_value_at_lsk(str(d.cost_index), "L", 5, check_error=True)
             if not ok:
                 self._log_msg("WARNING: Cost index entry failed (CDU error)")
             self._check_stop()
