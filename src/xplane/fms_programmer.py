@@ -1222,8 +1222,7 @@ class FMSProgrammer:
     # ------------------------------------------------------------------
 
     def program_takeoff_ref(self):
-        """Program TAKEOFF REF: flaps, CG, verify V-speeds."""
-        d = self._data
+        """Program TAKEOFF REF: obtain CG, enter V-speeds."""
         self._check_stop()
 
         # Navigate to TAKEOFF REF: N1 LIMIT -> LSK 6R (TAKEOFF)
@@ -1240,39 +1239,33 @@ class FMSProgrammer:
             self._log_msg("Could not find TAKEOFF REF page, skipping")
             return
 
-        # Flap setting -> LSK 1L (default to 5 for 737 if not provided)
-        flap = d.flap_setting if d.flap_setting else "5"
-        self._log_msg(f"Entering flap setting: {flap}")
-        self.cdu.enter_value_at_lsk(flap, "L", 1, clear_first=False, check_error=False)
+        # Enter FLAPS at LSK 1L
+        d = self._data
+        flaps = d.flap_setting if d.flap_setting else "5"
+        self._log_msg(f"Entering FLAPS: {flaps}")
+        self.cdu.enter_value_at_lsk(flaps, "L", 1, check_error=True)
         self._check_stop()
 
-        # CG/Trim -> LSK 2L
-        if d.trim:
-            self._log_msg(f"Entering trim: {d.trim}")
-            self.cdu.enter_value_at_lsk(str(d.trim), "L", 2, clear_first=False, check_error=False)
-            self._check_stop()
-
-        # Wait for V-speeds to calculate then read them
+        # Press LSK 3L to obtain CG
+        self._log_msg("Obtaining CG (LSK 3L)")
+        self.cdu.press_lsk("L", 3)
         time.sleep(0.5)
-        screen = self.cdu.read_screen()
+        self._check_stop()
 
-        # Extract V-speeds from the right side of lines 1, 2, 3
-        def extract_right_number(line):
-            if not line:
-                return ""
-            # Right side of CDU line — look for numbers in the right half
-            right_half = line[len(line)//2:]
-            nums = re.findall(r'\d{2,3}', right_half)
-            return nums[-1] if nums else ""
+        # Press LSK 1R, 2R, 3R to enter V1, VR, V2
+        self._log_msg("Entering V1 (LSK 1R)")
+        self.cdu.press_lsk("R", 1)
+        time.sleep(0.3)
 
-        v1 = extract_right_number(screen[1] if len(screen) > 1 else "")
-        v_r = extract_right_number(screen[2] if len(screen) > 2 else "")
-        v2 = extract_right_number(screen[3] if len(screen) > 3 else "")
+        self._log_msg("Entering VR (LSK 2R)")
+        self.cdu.press_lsk("R", 2)
+        time.sleep(0.3)
 
-        if v1 or v_r or v2:
-            self._log_msg(f"V-speeds: V1={v1} VR={v_r} V2={v2}")
-        else:
-            self._log_msg("V-speeds not calculated (check CG/weight entry)")
+        self._log_msg("Entering V2 (LSK 3R)")
+        self.cdu.press_lsk("R", 3)
+        time.sleep(0.3)
+
+        self._check_stop()
 
         # EXEC
         self.cdu.press_exec()
