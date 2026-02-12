@@ -662,23 +662,11 @@ class FMSProgrammer:
     # ------------------------------------------------------------------
 
     def program_pos_init(self):
-        """Wait for IRS alignment, then set airport reference position on POS INIT page."""
+        """Navigate to POS INIT page, enter airport ref, copy coords to SET IRS POS."""
         d = self._data
         self._check_stop()
 
-        # Log GPS position first so pilot can verify correct flight plan
-        gps_pos = self.client.get_dataref(_IRS_GPS_POS, timeout=1.0)
-        if gps_pos:
-            gps_str = _decode_fmc_line(gps_pos)
-            self._log_msg(f"Aircraft GPS position: {gps_str}")
-        self._log_msg(f"Flight plan departure: {d.origin}")
-
-        # Wait for IRS alignment
-        self._log_msg("Waiting for IRS alignment...")
-        self._wait_for_irs_alignment()
-        self._check_stop()
-
-        # Navigate to POS INIT: INIT REF → check title → NEXT PAGE if needed
+        # Navigate to POS INIT page
         self.cdu.clear_scratchpad()
         self.cdu.press_key("INIT_REF")
         self.cdu.wait_for_page()
@@ -687,7 +675,6 @@ class FMSProgrammer:
         self._log_msg(f"INIT REF page title: {title}")
 
         if "POS INIT" not in (title or "").upper():
-            # Probably on IDENT page — press NEXT PAGE to get to POS INIT
             self.cdu.press_key("NEXT_PAGE")
             self.cdu.wait_for_page()
             title = self.cdu.read_line(0)
@@ -695,19 +682,19 @@ class FMSProgrammer:
 
         self._check_stop()
 
-        # Enter origin airport ICAO → LSK 2L (REF AIRPORT)
+        # Enter origin airport ICAO at LSK 2L (REF AIRPORT)
         if d.origin:
             self._log_msg(f"Entering REF AIRPORT: {d.origin}")
             self.cdu.enter_value_at_lsk(d.origin, "L", 2, check_error=True)
-            time.sleep(0.5)  # Wait for coordinates to populate at LSK 2R
+            time.sleep(0.5)
             self._check_stop()
 
-            # Press LSK 2R to copy airport coordinates into scratchpad
+            # Copy airport coordinates from LSK 2R into scratchpad
             self._log_msg("Copying airport coordinates (LSK 2R)")
             self.cdu.press_lsk("R", 2)
             time.sleep(0.3)
 
-            # Press LSK 4R to set IRS position
+            # Paste into SET IRS POS (LSK 4R)
             self._log_msg("Setting IRS position (LSK 4R)")
             self.cdu.press_lsk("R", 4)
             self.cdu.wait_for_page()
