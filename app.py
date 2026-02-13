@@ -35,6 +35,39 @@ print(f"[server] Starting version {SERVER_VERSION}")
 
 app = FastAPI(title="Claude Shell App", version="1.0.0")
 
+
+# ---------------------------------------------------------------------------
+# Background ExtPlane health monitor — detects stale connections and recovers
+# ---------------------------------------------------------------------------
+_health_check_task = None
+
+
+async def _extplane_health_loop():
+    """Periodically check ExtPlane connection health and auto-reconnect."""
+    while True:
+        await asyncio.sleep(5)
+        try:
+            client = get_client()
+            if client.is_connected:
+                if not client.health_check():
+                    print("[health] Stale ExtPlane connection detected, reconnecting...")
+                    client.reconnect()
+        except Exception as e:
+            print(f"[health] Error in health check: {e}")
+
+
+@app.on_event("startup")
+async def start_health_monitor():
+    global _health_check_task
+    _health_check_task = asyncio.create_task(_extplane_health_loop())
+
+
+@app.on_event("shutdown")
+async def stop_health_monitor():
+    global _health_check_task
+    if _health_check_task:
+        _health_check_task.cancel()
+
 # Initialize X-Plane commands loader (singleton)
 xplane_config = XPlaneConfig()
 commands_loader = CommandsLoader(xplane_config)
@@ -1562,6 +1595,7 @@ async def fms_program():
     if not client.is_connected:
         client.connect()
     fms.client = client
+    fms.cdu.client = client
     try:
         fms.program_all()
         return {"status": "ok", "message": "Programming started"}
@@ -1577,6 +1611,7 @@ async def fms_program_page(page: str):
     if not client.is_connected:
         client.connect()
     fms.client = client
+    fms.cdu.client = client
     try:
         fms.program_page(page)
         return {"status": "ok", "page": page}
@@ -1614,6 +1649,16 @@ async def fms_reset():
     fms = get_fms_programmer()
     fms.reset()
     return {"status": "ok", "message": "Programmer state reset"}
+
+
+@app.post("/api/fms/release")
+async def fms_release():
+    """Destroy FMS programmer completely for a fresh start."""
+    global _fms_programmer
+    if _fms_programmer:
+        _fms_programmer.stop()
+    _fms_programmer = None
+    return {"status": "ok", "message": "FMS programmer released"}
 
 
 @app.get("/api/fms/status")

@@ -72,7 +72,11 @@
             font-size: 0.8rem;
             font-weight: 500;
             color: white;
+            transition: transform 0.1s, filter 0.1s;
+            position: relative;
+            text-align: center;
         }
+        a.btn { display: inline-block; }
         .btn:disabled { opacity: 0.4; cursor: not-allowed; }
         .btn-primary { background: #e94560; }
         .btn-primary:hover:not(:disabled) { background: #ff6b6b; }
@@ -82,6 +86,29 @@
         .btn-success:hover:not(:disabled) { background: #34d399; }
         .btn-warning { background: #f59e0b; color: #000; }
         .btn-warning:hover:not(:disabled) { background: #fbbf24; }
+
+        .btn:active:not(:disabled):not(.busy) {
+            transform: scale(0.93);
+            filter: brightness(0.75);
+        }
+        .btn.busy {
+            color: transparent !important;
+            pointer-events: none;
+        }
+        .btn.busy::after {
+            content: '';
+            position: absolute;
+            width: 14px; height: 14px;
+            top: 50%; left: 50%;
+            margin: -7px 0 0 -7px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: btn-spin 0.6s linear infinite;
+        }
+        @keyframes btn-spin {
+            to { transform: rotate(360deg); }
+        }
 
         /* Load bar */
         .load-bar {
@@ -150,11 +177,17 @@
             flex-direction: column;
             align-items: center;
             gap: 4px;
+            width: 100%;
         }
 
         .checklist-btn:hover {
             border-color: #e94560;
             background: #0f3460;
+        }
+
+        .checklist-btn:active:not(:disabled) {
+            transform: scale(0.93);
+            filter: brightness(0.75);
         }
 
         .checklist-btn.active {
@@ -856,6 +889,8 @@
 
         // ---- Load ----
         async function loadChecklist() {
+            const loadBtn = document.querySelector('.load-bar .btn-primary');
+            if (loadBtn) loadBtn.classList.add('busy');
             const path = document.getElementById('clistPath').value;
             const fd = new FormData();
             fd.append('path', path);
@@ -878,6 +913,8 @@
                 startPolling();
             } catch (e) {
                 alert('Error: ' + e.message);
+            } finally {
+                if (loadBtn) loadBtn.classList.remove('busy');
             }
         }
 
@@ -1238,6 +1275,7 @@
                 completedChecklists.clear();
                 speechQueue = [];
                 isSpeaking = false;
+                if (window.speechSynthesis) speechSynthesis.cancel();
 
                 // 3. Stop polling
                 if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -1253,6 +1291,10 @@
                 document.getElementById('btnConfirm').style.display = 'none';
                 document.getElementById('logPanel').innerHTML = '';
                 document.getElementById('btnRestart').disabled = true;
+                document.getElementById('runnerBadge').textContent = 'IDLE';
+                document.getElementById('runnerBadge').className = 'runner-badge idle';
+                document.getElementById('btnSkip').disabled = true;
+                document.getElementById('btnPause').disabled = true;
 
                 // 5. Load checklist (auto-detect if path empty)
                 const path = document.getElementById('clistPath').value;

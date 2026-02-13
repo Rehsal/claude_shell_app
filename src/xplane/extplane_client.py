@@ -92,6 +92,53 @@ class ExtPlaneClient:
     def is_connected(self) -> bool:
         return self._connected
 
+    def health_check(self) -> bool:
+        """Check if the connection is actually alive.
+
+        Detects stale connections by verifying the reader thread is running
+        and the socket is responsive. Returns True if healthy, False if stale.
+        Automatically marks the connection as dead if stale.
+        """
+        if not self._connected:
+            return False
+
+        # Check 1: reader thread must be alive
+        if self._reader_thread is None or not self._reader_thread.is_alive():
+            print("[ExtPlane] Health check: reader thread dead, marking disconnected")
+            self._connected = False
+            return False
+
+        # Check 2: socket must still be open
+        if not self._socket:
+            print("[ExtPlane] Health check: socket is None, marking disconnected")
+            self._connected = False
+            return False
+
+        try:
+            self._socket.getpeername()
+        except Exception:
+            print("[ExtPlane] Health check: socket getpeername failed, marking disconnected")
+            self._connected = False
+            return False
+
+        # Check 3: can we actually send? Try a harmless subscribe/unsub
+        test_dr = "sim/time/zulu_time_sec"
+        if not self._send(f"sub {test_dr}"):
+            print("[ExtPlane] Health check: test send failed, marking disconnected")
+            return False
+        # Brief wait then unsub
+        time.sleep(0.05)
+        self._send(f"unsub {test_dr}")
+
+        return True
+
+    def reconnect(self) -> bool:
+        """Force disconnect and reconnect."""
+        print("[ExtPlane] Reconnecting...")
+        self.disconnect()
+        time.sleep(0.2)
+        return self.connect()
+
     def _send(self, message: str) -> bool:
         """Send a message to ExtPlane."""
         if not self._connected or not self._socket:

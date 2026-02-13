@@ -242,6 +242,8 @@
             font-size: 0.75rem;
             cursor: pointer;
             flex-shrink: 0;
+            transition: transform 0.1s, filter 0.1s;
+            position: relative;
         }
 
         .btn-test-small:hover {
@@ -291,7 +293,11 @@
             cursor: pointer;
             font-size: 0.85rem;
             font-weight: 500;
+            transition: transform 0.1s, filter 0.1s;
+            position: relative;
+            text-align: center;
         }
+        a.btn { display: inline-block; }
 
         .btn:disabled {
             opacity: 0.5;
@@ -318,6 +324,30 @@
         }
 
         .btn-success:hover:not(:disabled) { background: #34d399; }
+
+        .btn:active:not(:disabled):not(.busy),
+        .btn-test-small:active:not(:disabled):not(.busy) {
+            transform: scale(0.93);
+            filter: brightness(0.75);
+        }
+        .btn.busy, .btn-test-small.busy {
+            color: transparent !important;
+            pointer-events: none;
+        }
+        .btn.busy::after, .btn-test-small.busy::after {
+            content: '';
+            position: absolute;
+            width: 14px; height: 14px;
+            top: 50%; left: 50%;
+            margin: -7px 0 0 -7px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: btn-spin 0.6s linear infinite;
+        }
+        @keyframes btn-spin {
+            to { transform: rotate(360deg); }
+        }
 
         .toolbar-spacer { flex: 1; }
 

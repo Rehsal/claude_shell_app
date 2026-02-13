@@ -532,6 +532,8 @@ class FMSProgrammer:
         self._log.clear()
         self._progress = 0.0
         self._page_results.clear()
+        self._stop_event.clear()
+        self._thread = None
         self._log_msg("--- RESET ---")
 
     def get_status(self) -> Dict:
@@ -1200,21 +1202,12 @@ class FMSProgrammer:
     # ------------------------------------------------------------------
 
     def program_n1_limit(self):
-        """Program N1 LIMIT page: assumed temp, derate."""
-        d = self._data
+        """Navigate to N1 LIMIT page."""
         self._check_stop()
 
         self.cdu.clear_scratchpad()
         self.cdu.press_key("N1_LIMIT")
         self.cdu.wait_for_page()
-        self._log_msg("On N1 LIMIT page")
-
-        # Assumed temp -> LSK 1L
-        if d.assumed_temp:
-            self._log_msg(f"Entering assumed temp: {d.assumed_temp}")
-            self.cdu.enter_value_at_lsk(str(d.assumed_temp), "L", 1, clear_first=False, check_error=False)
-            self._check_stop()
-
         self._log_msg("N1 LIMIT complete")
 
     # ------------------------------------------------------------------

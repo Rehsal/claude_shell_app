@@ -53,7 +53,11 @@
         .btn {
             padding: 6px 14px; border: none; border-radius: 5px;
             cursor: pointer; font-size: 0.8rem; font-weight: 500; color: white;
+            transition: transform 0.1s, filter 0.1s;
+            position: relative;
+            text-align: center;
         }
+        a.btn { display: inline-block; }
         .btn:disabled { opacity: 0.4; cursor: not-allowed; }
         .btn-primary { background: #e94560; }
         .btn-primary:hover:not(:disabled) { background: #ff6b6b; }
@@ -65,6 +69,29 @@
         .btn-danger:hover:not(:disabled) { background: #f87171; }
         .btn-warning { background: #f59e0b; }
         .btn-warning:hover:not(:disabled) { background: #fbbf24; }
+
+        .btn:active:not(:disabled):not(.busy) {
+            transform: scale(0.93);
+            filter: brightness(0.75);
+        }
+        .btn.busy {
+            color: transparent !important;
+            pointer-events: none;
+        }
+        .btn.busy::after {
+            content: '';
+            position: absolute;
+            width: 14px; height: 14px;
+            top: 50%; left: 50%;
+            margin: -7px 0 0 -7px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: btn-spin 0.6s linear infinite;
+        }
+        @keyframes btn-spin {
+            to { transform: rotate(360deg); }
+        }
 
         .main-content {
             display: flex; flex: 1; overflow: hidden;
@@ -118,7 +145,7 @@
             grid-template-columns: 1fr 1fr;
             gap: 6px;
         }
-        .page-buttons .btn { font-size: 0.75rem; padding: 8px 6px; }
+        .page-buttons .btn { font-size: 0.75rem; padding: 8px 6px; width: 100%; }
         .btn-program-all {
             grid-column: 1 / -1;
             background: #10b981 !important;
@@ -381,32 +408,39 @@
         }
 
         async function programAll() {
+            const btn = document.getElementById('btnProgramAll');
+            if (btn) btn.classList.add('busy');
             try {
                 const resp = await fetch('/api/fms/program', { method: 'POST' });
                 const data = await resp.json();
                 if (!resp.ok) alert(data.detail || 'Start failed');
             } catch (e) {
                 alert('Error: ' + e.message);
+            } finally {
+                if (btn) btn.classList.remove('busy');
             }
         }
 
         async function programPage(page) {
+            const btnId = PAGE_BUTTONS[page];
+            const btn = btnId ? document.getElementById(btnId) : null;
             if (isRunning) {
                 // Queue it if not already queued
                 if (!pageQueue.includes(page)) {
                     pageQueue.push(page);
-                    // Show queued button with running style as preview
-                    const btnId = PAGE_BUTTONS[page];
-                    if (btnId) document.getElementById(btnId)?.classList.add('status-running');
+                    if (btn) btn.classList.add('status-running');
                 }
                 return;
             }
+            if (btn) btn.classList.add('busy');
             try {
                 const resp = await fetch(`/api/fms/program/${page}`, { method: 'POST' });
                 const data = await resp.json();
                 if (!resp.ok) alert(data.detail || 'Start failed');
             } catch (e) {
                 alert('Error: ' + e.message);
+            } finally {
+                if (btn) btn.classList.remove('busy');
             }
         }
 
@@ -446,12 +480,13 @@
             btn.disabled = true;
             btn.textContent = 'Initializing...';
             try {
-                // 1. Clear queue and stop any running programming
+                // 1. Clear queue
                 pageQueue = [];
-                await fetch('/api/fms/stop', { method: 'POST' });
+                isRunning = false;
+                wasRunning = false;
 
-                // 2. Reset backend state
-                await fetch('/api/fms/reset', { method: 'POST' });
+                // 2. Release programmer (destroys singleton for clean slate)
+                await fetch('/api/fms/release', { method: 'POST' });
 
                 // 3. Reset frontend
                 resetPageButtons();
@@ -459,8 +494,10 @@
                 document.getElementById('logContent').innerHTML = '';
                 document.getElementById('progressFill').style.width = '0%';
                 document.getElementById('ofpSummary').style.display = 'none';
+                document.getElementById('stateBadge').textContent = 'IDLE';
+                document.getElementById('stateBadge').className = 'runner-badge idle';
 
-                // 4. Fetch SimBrief
+                // 4. Fetch SimBrief (creates fresh programmer)
                 const pid = document.getElementById('pilotId').value.trim() || '77708';
                 localStorage.setItem('fms_pilot_id', pid);
                 const body = new URLSearchParams({ pilot_id: pid });
