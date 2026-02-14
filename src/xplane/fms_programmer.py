@@ -1112,70 +1112,74 @@ class FMSProgrammer:
             # Scan current page and all subsequent pages
             pages_checked = 0
             max_pages = 10
-            prev_content = None
+            seen_pages = set()
 
             while pages_checked < max_pages:
                 self._check_stop()
                 lines = self.cdu.read_screen()
 
-                # Detect page cycling
+                # Detect page cycling (compare against all seen pages)
                 content_key = tuple(l.strip() for l in lines)
-                if prev_content is not None and content_key == prev_content:
+                if content_key in seen_pages:
                     break
-                prev_content = content_key
+                seen_pages.add(content_key)
 
-                # Check each line for discontinuity markers (-----)
-                # Discontinuities appear on even-numbered lines (2, 4, 6, 8, 10, 12)
-                for line_idx in range(2, 13, 2):
-                    line_text = lines[line_idx] if line_idx < len(lines) else ""
+                # CDU LEGS layout: Line 0 = title, Lines 1-6 = LSK 1-6
+                # (line index equals LSK number directly)
+                # Disco markers in dataref: '-----' (dashes) or '*****' (asterisks
+                # that render as dashes on CDU, labeled ROUTE DISCONTINUITY)
+                #
+                # Removal: click waypoint AFTER disco (ident → scratchpad),
+                # then click the DISCO's own LSK (writes waypoint into disco,
+                # creating a direct connection). No waypoints are removed.
+                lsk_debug = []
+                for lsk in range(1, 7):
+                    lt = lines[lsk].strip() if lsk < len(lines) else ""
+                    if lt:
+                        lsk_debug.append(f"LSK{lsk}='{lt}'")
+                if lsk_debug:
+                    self._log_msg(f"Page {pages_checked+1}: {', '.join(lsk_debug)}")
+
+                for lsk in range(1, 7):
+                    line_text = lines[lsk] if lsk < len(lines) else ""
                     if not line_text or not line_text.strip():
                         continue
-                    line_upper = line_text.strip().upper()
+                    line_stripped = line_text.strip()
                     is_disco = (
-                        "DISCONTINUITY" in line_upper
-                        or (len(line_upper) >= 3 and all(c == '-' for c in line_upper))
+                        "DISCONTINUITY" in line_stripped.upper()
+                        or (len(line_stripped) >= 3 and all(c == '-' for c in line_stripped))
+                        or (len(line_stripped) >= 3 and all(c == '*' for c in line_stripped))
                     )
                     if not is_disco:
                         continue
 
-                    disco_lsk = (line_idx + 1) // 2  # LSK row of the disco
-                    if disco_lsk < 1 or disco_lsk > 6:
-                        continue
-
-                    # The waypoint BEFORE the disco is on the same LSK row
-                    # (its ident is on the odd line above: line_idx - 1)
-                    before_lsk = disco_lsk
-
-                    # The waypoint AFTER the disco is on the next LSK row
+                    disco_lsk = lsk
                     after_lsk = disco_lsk + 1
 
+                    # Find the next waypoint (skip other discos, footers, blanks)
+                    after_text = ""
                     if after_lsk <= 6:
-                        # Next waypoint is on same page
-                        after_line = lines[after_lsk * 2 - 1] if (after_lsk * 2 - 1) < len(lines) else ""
-                        after_ident = after_line.strip().split()[0] if after_line.strip() else "?"
-                        self._log_msg(f"Discontinuity at LSK {disco_lsk}L, connecting to {after_ident} at LSK {after_lsk}L")
-                        self.cdu.clear_scratchpad()
-                        self.cdu.press_lsk("L", after_lsk)
-                        time.sleep(0.3)
-                        self.cdu.press_lsk("L", before_lsk)
-                        self.cdu.wait_for_page()
-                    else:
-                        # Disco is on LSK 6 — next waypoint is on next page LSK 1
-                        self._log_msg(f"Discontinuity at LSK 6L (end of page), going to next page")
-                        self.cdu.clear_scratchpad()
-                        self.cdu.press_key("NEXT_PAGE")
-                        self.cdu.wait_for_page()
-                        next_lines = self.cdu.read_screen()
-                        after_line = next_lines[1] if len(next_lines) > 1 else ""
-                        after_ident = after_line.strip().split()[0] if after_line.strip() else "?"
-                        self._log_msg(f"Connecting to {after_ident} at LSK 1L (next page)")
-                        self.cdu.press_lsk("L", 1)
-                        time.sleep(0.3)
-                        # Go back to previous page where the disco was
-                        self.cdu.press_key("PREV_PAGE")
-                        self.cdu.wait_for_page()
-                        self.cdu.press_lsk("L", 6)
-                        self.cdu.wait_for_page()
+                        raw = lines[after_lsk].strip() if after_lsk < len(lines) else ""
+                        if raw and '<' not in raw and '>' not in raw and not all(c in '-*' for c in raw):
+                            after_text = raw
+
+                    if not after_text:
+                        self._log_msg(f"End-of-route discontinuity at LSK {disco_lsk}L, skipping")
+                        continue
+
+                    after_ident = after_text.split()[0]
+
+                    # Step 1: click waypoint after disco → ident to scratchpad
+                    # Step 2: click the disco's own LSK → replaces disco with direct
+                    self._log_msg(f"Disco at LSK {disco_lsk}L: writing {after_ident} (LSK {after_lsk}) into disco")
+                    self.cdu.clear_scratchpad()
+                    self.cdu.press_lsk("L", after_lsk)
+                    time.sleep(0.3)
+                    self.cdu.press_lsk("L", disco_lsk)
+                    self.cdu.wait_for_page()
+                    # EXEC after each removal so CDU refreshes properly
+                    self.cdu.press_exec()
+                    self.cdu.wait_for_page()
 
                     total_removed += 1
                     found = True
