@@ -409,6 +409,73 @@
         .fms-badge.error { color: #f87171; background: rgba(248,113,113,0.15); }
         .fms-badge.stopped { color: #fbbf24; background: rgba(251,191,36,0.15); }
 
+        /* Skip disco mini-toggle */
+        .skip-disco-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-size: 0.6rem;
+            color: #9ca3af;
+            cursor: pointer;
+        }
+        .skip-disco-toggle input { width: 12px; height: 12px; }
+        .skip-disco-toggle.active { color: #4ade80; }
+
+        /* Cached plans dropdown */
+        .cached-plans-wrap {
+            position: relative;
+            display: inline-block;
+        }
+        .cached-plans-btn {
+            background: none;
+            border: 1px solid #374151;
+            border-radius: 4px;
+            color: #94a3b8;
+            font-size: 0.65rem;
+            padding: 4px 6px;
+            cursor: pointer;
+        }
+        .cached-plans-btn:hover { border-color: #e94560; color: #e2e8f0; }
+        .cached-plans-dropdown {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            min-width: 200px;
+            background: #1a1a2e;
+            border: 1px solid #374151;
+            border-radius: 4px;
+            z-index: 100;
+            max-height: 200px;
+            overflow-y: auto;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+        .cached-plans-dropdown.show { display: block; }
+        .cached-plan-item {
+            padding: 6px 10px;
+            font-size: 0.72rem;
+            color: #e2e8f0;
+            cursor: pointer;
+            border-bottom: 1px solid #374151;
+        }
+        .cached-plan-item:last-child { border-bottom: none; }
+        .cached-plan-item:hover { background: #0f3460; }
+        .cached-plan-item .plan-route { font-weight: 600; color: #4ade80; }
+        .cached-plan-item .plan-date { color: #64748b; font-size: 0.62rem; }
+
+        /* HW PTT section */
+        .hw-ptt-wrap {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .hw-ptt-indicator {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #374151;
+        }
+        .hw-ptt-indicator.pressed { background: #4ade80; box-shadow: 0 0 6px rgba(74,222,128,0.5); }
+
         /* Scrolling checklist items */
         .items-scroll {
             flex: 1;
@@ -580,6 +647,14 @@
                 <input type="checkbox" id="speakResponse" checked>
                 Spk
             </label>
+            <div class="hw-ptt-wrap" id="hwPttWrap">
+                <label class="toggle-label">
+                    <input type="checkbox" id="hwPttEnabled" onchange="toggleHwPtt()">
+                    HW
+                </label>
+                <div class="hw-ptt-indicator" id="hwPttIndicator"></div>
+                <button class="btn btn-secondary" onclick="detectPttButton()" style="font-size:0.6rem;padding:2px 6px;" id="hwPttDetectBtn">Detect</button>
+            </div>
         </div>
     </div>
 
@@ -588,6 +663,11 @@
     <div class="fms-bar">
         <input type="text" id="pilotId" placeholder="Pilot ID">
         <button class="btn btn-primary" id="fetchBtn" onclick="fetchSimbrief()">Fetch</button>
+        <div class="cached-plans-wrap">
+            <button class="cached-plans-btn" onclick="toggleCachedPlans()" id="cachedPlansBtn" title="Load cached plan">&#9660;</button>
+            <div class="cached-plans-dropdown" id="cachedPlansDropdown"></div>
+        </div>
+        <button class="btn btn-secondary" onclick="initFms()" style="font-size:0.65rem;padding:3px 8px;" title="Re-initialize FMS programmer">Init</button>
         <div class="ofp-mini" id="ofpMini">
             <span id="ofpRoute"></span>
             <span>FL<span class="val" id="ofpFL"></span></span>
@@ -606,6 +686,9 @@
         <button class="fms-page-btn" onclick="fmsProgramPage('takeoff_ref')" id="fms_btn_takeoff_ref">T/O</button>
         <button class="fms-page-btn" onclick="fmsProgramPage('vnav')" id="fms_btn_vnav">VNAV</button>
         <button class="fms-page-btn" onclick="fmsProgramPage('legs')" id="fms_btn_legs">LEGS</button>
+        <label class="skip-disco-toggle" id="skipDiscoToggle" title="Remove discontinuities from LEGS">
+            <input type="checkbox" id="skipDisco" onchange="toggleSkipDisco()" checked>DISCO
+        </label>
         <button class="btn btn-success" onclick="fmsProgramAll()" style="font-size:0.68rem;padding:4px 10px;">ALL</button>
         <div class="spacer"></div>
         <button class="btn btn-danger" onclick="fmsStop()" style="font-size:0.65rem;padding:3px 8px;">Stop</button>
@@ -624,6 +707,7 @@
         <label class="checkbox-label">
             <input type="checkbox" id="chkSpeech" checked onchange="toggleSpeech(this.checked)"> TTS
         </label>
+        <button class="btn btn-secondary" onclick="initChecklist()" style="font-size:0.65rem;padding:3px 8px;" title="Re-initialize checklist">Init</button>
     </div>
 
     <!-- Checklist chip grid -->
@@ -718,11 +802,89 @@
             'legs': 'fms_btn_legs',
         };
 
+        // HW PTT state
+        let hwPttEnabled = false;
+        let hwPttPolling = false;
+        let hwPttPressed = false;
+        let hwPttPollTimer = null;
+
+        // ---- Persistent Settings ----
+        async function loadSettings() {
+            try {
+                const r = await fetch('/api/settings');
+                const s = await r.json();
+
+                // Apply to UI toggles
+                document.getElementById('aiCopilot').checked = !!s.ai_copilot;
+                document.getElementById('continuousListen').checked = !!s.continuous_listen;
+                document.getElementById('speakResponse').checked = s.speak_response !== false;
+                document.getElementById('chkAutoContinue').checked = s.auto_continue !== false;
+                document.getElementById('chkSpeech').checked = s.tts_enabled !== false;
+                // DISCO toggle: checked = remove discos (inverted from skip_discontinuities)
+                const removeDisco = !s.skip_discontinuities;
+                document.getElementById('skipDisco').checked = removeDisco;
+                document.getElementById('hwPttEnabled').checked = !!s.hardware_ptt_enabled;
+
+                // Update disco label style
+                document.getElementById('skipDiscoToggle').classList.toggle('active', removeDisco);
+
+                // Apply annunciator state
+                annunciatorEnabled = !!s.annunciator_enabled;
+                updateAnnUI();
+
+                // Activate continuous mode if persisted
+                if (s.continuous_listen && recognition) {
+                    continuousMode = true;
+                    recognition.continuous = true;
+                    if (!isListening) try { recognition.start(); } catch {}
+                }
+
+                // HW PTT
+                hwPttEnabled = !!s.hardware_ptt_enabled;
+                if (s.hardware_ptt_button_index >= 0) {
+                    document.getElementById('hwPttDetectBtn').textContent = `#${s.hardware_ptt_button_index}`;
+                }
+                if (hwPttEnabled) startHwPttPolling();
+
+                return s;
+            } catch { return {}; }
+        }
+
+        async function saveSetting(key, value) {
+            try {
+                await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({[key]: value})
+                });
+            } catch {}
+        }
+
+        // Wire up toggle change listeners for persistence
+        function wireSettingToggles() {
+            const map = {
+                'aiCopilot': 'ai_copilot',
+                'continuousListen': 'continuous_listen',
+                'speakResponse': 'speak_response',
+                'chkAutoContinue': 'auto_continue',
+                'chkSpeech': 'tts_enabled',
+            };
+            for (const [id, key] of Object.entries(map)) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                el.addEventListener('change', () => saveSetting(key, el.checked));
+            }
+        }
+
         // ---- Init ----
         document.addEventListener('DOMContentLoaded', async () => {
             await checkConnection();
             setInterval(checkConnection, 10000);
             checkAiAvailability();
+
+            // Load persisted settings and wire toggles
+            await loadSettings();
+            wireSettingToggles();
 
             // Version auto-refresh
             const pv = document.querySelector('meta[name="server-version"]')?.content || '';
@@ -746,6 +908,13 @@
             document.getElementById('pilotId').value = savedPid;
             checkFmsCachedData();
             setInterval(pollFmsStatus, 500);
+
+            // Close cached plans dropdown on outside click
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('.cached-plans-wrap')) {
+                    document.getElementById('cachedPlansDropdown').classList.remove('show');
+                }
+            });
         });
 
         // ---- Connection ----
@@ -1077,6 +1246,26 @@
             } catch {}
         }
 
+        async function initFms() {
+            fmsPageQueue = [];
+            fmsLastLogLen = 0;
+            try {
+                await fetch('/api/fms/release', { method: 'POST' });
+            } catch {}
+            // Reset UI
+            document.querySelectorAll('.fms-page-btn').forEach(b =>
+                b.classList.remove('status-running', 'status-completed', 'status-error'));
+            document.getElementById('fmsProgressFill').style.width = '0%';
+            document.getElementById('fmsBadge').textContent = 'IDLE';
+            document.getElementById('fmsBadge').className = 'fms-badge idle';
+            document.getElementById('ofpMini').classList.remove('show');
+            document.getElementById('fmsPages').classList.remove('show');
+            document.getElementById('fmsProgressWrap').style.display = 'none';
+            // Re-fetch SimBrief if pilot ID is set
+            const pid = document.getElementById('pilotId').value.trim();
+            if (pid) fetchSimbrief();
+        }
+
         async function pollFmsStatus() {
             try {
                 const r = await fetch('/api/fms/status');
@@ -1123,6 +1312,31 @@
         }
 
         // ---- Checklist ----
+        async function initChecklist() {
+            try {
+                await fetch('/api/checklist/release', { method: 'POST' });
+            } catch {}
+            // Reset UI
+            loaded = false;
+            lastHistoryLen = 0;
+            allChecklists = [];
+            completedChecklists.clear();
+            selectedChecklist = null;
+            document.getElementById('checklistGrid').innerHTML = '';
+            document.getElementById('gridWrap').style.display = 'none';
+            document.getElementById('modeBar').style.display = 'none';
+            document.getElementById('itemsScroll').innerHTML =
+                '<div class="empty-state"><h3>No Checklist Loaded</h3><p>Load a checklist file to begin</p></div>';
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('progressText').textContent = '';
+            document.getElementById('runnerBadge').textContent = 'IDLE';
+            document.getElementById('runnerBadge').className = 'runner-badge idle';
+            document.getElementById('confirmMsg').style.display = 'none';
+            document.getElementById('btnConfirm').style.display = 'none';
+            // Reload checklist
+            loadChecklist();
+        }
+
         async function loadChecklist() {
             const path = document.getElementById('clistPath').value;
             const fd = new FormData();
@@ -1466,6 +1680,167 @@
                 gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
                 osc.stop(ctx.currentTime + 0.3);
             } catch {}
+        }
+
+        // ---- Skip Discontinuities Toggle ----
+        function toggleSkipDisco() {
+            const checked = document.getElementById('skipDisco').checked;
+            document.getElementById('skipDiscoToggle').classList.toggle('active', checked);
+            // Inverted: checked = remove discos = skip_discontinuities: false
+            saveSetting('skip_discontinuities', !checked);
+        }
+
+        // ---- Cached SimBrief Plans ----
+        async function toggleCachedPlans() {
+            const dd = document.getElementById('cachedPlansDropdown');
+            if (dd.classList.contains('show')) {
+                dd.classList.remove('show');
+                return;
+            }
+            // Fetch cached plans
+            try {
+                const r = await fetch('/api/fms/simbrief/cached');
+                const d = await r.json();
+                const plans = d.plans || [];
+                if (plans.length === 0) {
+                    dd.innerHTML = '<div class="cached-plan-item" style="color:#64748b;">No cached plans</div>';
+                } else {
+                    dd.innerHTML = plans.map(p => {
+                        const dt = new Date(p.timestamp * 1000);
+                        const dateStr = dt.toLocaleDateString() + ' ' + dt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+                        return `<div class="cached-plan-item" style="display:flex;align-items:center;gap:6px;">
+                            <div style="flex:1;cursor:pointer;" onclick="loadCachedPlan('${p.filename}')">
+                                <span class="plan-route">${p.origin} → ${p.destination}</span>
+                                ${p.flight_number ? ` <span style="color:#94a3b8;">${p.flight_number}</span>` : ''}
+                                <br><span class="plan-date">${dateStr}</span>
+                            </div>
+                            <button onclick="event.stopPropagation();deleteCachedPlan('${p.filename}')" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:1rem;padding:2px 4px;" title="Delete">&times;</button>
+                        </div>`;
+                    }).join('');
+                }
+                dd.classList.add('show');
+            } catch {
+                dd.innerHTML = '<div class="cached-plan-item" style="color:#f87171;">Error loading</div>';
+                dd.classList.add('show');
+            }
+        }
+
+        async function loadCachedPlan(filename) {
+            document.getElementById('cachedPlansDropdown').classList.remove('show');
+            const btn = document.getElementById('fetchBtn');
+            btn.disabled = true;
+            btn.textContent = '...';
+            try {
+                const body = new URLSearchParams({ filename });
+                const r = await fetch('/api/fms/simbrief/load_cached', { method: 'POST', body });
+                const d = await r.json();
+                if (!r.ok) throw new Error(d.detail || 'Load failed');
+                showOFPMini(d);
+            } catch (e) {
+                alert('Load cached: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Fetch';
+            }
+        }
+
+        async function deleteCachedPlan(filename) {
+            try {
+                const body = new URLSearchParams({ filename });
+                await fetch('/api/fms/simbrief/delete_cached', { method: 'POST', body });
+            } catch {}
+            // Refresh the dropdown
+            document.getElementById('cachedPlansDropdown').classList.remove('show');
+            toggleCachedPlans();
+        }
+
+        // ---- Hardware PTT ----
+        function toggleHwPtt() {
+            hwPttEnabled = document.getElementById('hwPttEnabled').checked;
+            saveSetting('hardware_ptt_enabled', hwPttEnabled);
+            if (hwPttEnabled) {
+                startHwPttPolling();
+                const fd = new FormData();
+                fd.append('enabled', 'true');
+                fetch('/api/ptt/enable', { method: 'POST', body: fd });
+            } else {
+                stopHwPttPolling();
+                const fd = new FormData();
+                fd.append('enabled', 'false');
+                fetch('/api/ptt/enable', { method: 'POST', body: fd });
+            }
+        }
+
+        function startHwPttPolling() {
+            if (hwPttPolling) return;
+            hwPttPolling = true;
+            hwPttPollTimer = setInterval(pollHwPtt, 100);
+        }
+
+        function stopHwPttPolling() {
+            hwPttPolling = false;
+            if (hwPttPollTimer) { clearInterval(hwPttPollTimer); hwPttPollTimer = null; }
+            document.getElementById('hwPttIndicator').classList.remove('pressed');
+        }
+
+        async function pollHwPtt() {
+            try {
+                const r = await fetch('/api/ptt/status');
+                const d = await r.json();
+                const wasPressed = hwPttPressed;
+                hwPttPressed = d.pressed;
+                document.getElementById('hwPttIndicator').classList.toggle('pressed', d.pressed);
+
+                // Trigger voice recognition on press/release
+                if (d.pressed && !wasPressed && recognition) {
+                    // Button pressed — start listening
+                    document.getElementById('voiceResult').textContent = '';
+                    document.getElementById('voiceResult').className = 'voice-result';
+                    try { recognition.start(); } catch {}
+                } else if (!d.pressed && wasPressed && recognition && isListening) {
+                    // Button released — stop listening
+                    recognition.stop();
+                }
+            } catch {}
+        }
+
+        async function detectPttButton() {
+            const btn = document.getElementById('hwPttDetectBtn');
+            btn.disabled = true;
+            btn.textContent = '...';
+            try {
+                await fetch('/api/ptt/discover', { method: 'POST' });
+                // Poll for result
+                let attempts = 0;
+                const poll = setInterval(async () => {
+                    attempts++;
+                    try {
+                        const r = await fetch('/api/ptt/discover_result');
+                        const d = await r.json();
+                        if (d.button_index >= 0) {
+                            clearInterval(poll);
+                            // Save the button index
+                            const fd = new FormData();
+                            fd.append('button_index', d.button_index);
+                            await fetch('/api/ptt/save_button', { method: 'POST', body: fd });
+                            btn.textContent = `#${d.button_index}`;
+                            btn.disabled = false;
+                            document.getElementById('hwPttWrap').style.display = 'flex';
+                        } else if (!d.discovering || attempts > 100) {
+                            clearInterval(poll);
+                            btn.textContent = 'Detect';
+                            btn.disabled = false;
+                        }
+                    } catch {
+                        clearInterval(poll);
+                        btn.textContent = 'Detect';
+                        btn.disabled = false;
+                    }
+                }, 100);
+            } catch {
+                btn.textContent = 'Detect';
+                btn.disabled = false;
+            }
         }
 
         // ---- Util ----

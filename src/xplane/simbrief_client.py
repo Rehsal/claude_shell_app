@@ -7,9 +7,12 @@ structured dataclass for use by the FMS programmer.
 
 import json
 import logging
+import os
+import time
 import urllib.request
 import urllib.error
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -97,6 +100,10 @@ class SimBriefData:
     raw: Dict[str, Any] = field(default_factory=dict, repr=False)
 
 
+# Cache directory relative to project root
+_CACHE_DIR = Path(__file__).parent.parent.parent / "data" / "simbrief_cache"
+
+
 class SimBriefClient:
     """Fetches and parses a SimBrief OFP."""
 
@@ -150,6 +157,86 @@ class SimBriefClient:
         self._cached_data = data
         self._cached_pilot_id = pilot_id
         logger.info(f"SimBrief OFP parsed: {data.origin}->{data.destination} FL{data.cruise_altitude // 100}")
+
+        # Save to disk cache
+        try:
+            self._save_to_cache(data, raw)
+        except Exception as e:
+            logger.warning(f"Failed to save SimBrief cache: {e}")
+
+        return data
+
+    # ------------------------------------------------------------------
+    # Disk cache
+    # ------------------------------------------------------------------
+
+    def _save_to_cache(self, data: SimBriefData, raw: Dict) -> None:
+        """Save parsed plan + raw JSON to disk cache.
+
+        Uses origin+destination+flight_number as the key so re-fetching
+        the same plan overwrites rather than creating duplicates.
+        Different routes or flight numbers get separate entries.
+        """
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        ts = int(time.time())
+        flt = data.flight_number or "NoFlt"
+        key = f"{data.origin}{data.destination}_{flt}"
+        filename = f"{key}.json"
+        cache_entry = {
+            "origin": data.origin,
+            "destination": data.destination,
+            "flight_number": data.flight_number,
+            "timestamp": ts,
+            "raw": raw,
+        }
+        path = _CACHE_DIR / filename
+        path.write_text(json.dumps(cache_entry), encoding="utf-8")
+        logger.info(f"Cached SimBrief plan: {path.name}")
+        # Clean up old timestamp-based duplicates for this route
+        for old in _CACHE_DIR.glob(f"{data.origin}{data.destination}_*.json"):
+            if old != path and old.name != filename:
+                try:
+                    old.unlink()
+                except Exception:
+                    pass
+
+    def list_cached(self) -> List[Dict]:
+        """List cached plans, newest first."""
+        if not _CACHE_DIR.exists():
+            return []
+        results = []
+        for f in sorted(_CACHE_DIR.glob("*.json"), reverse=True):
+            try:
+                meta = json.loads(f.read_text(encoding="utf-8"))
+                results.append({
+                    "filename": f.name,
+                    "origin": meta.get("origin", ""),
+                    "destination": meta.get("destination", ""),
+                    "flight_number": meta.get("flight_number", ""),
+                    "timestamp": meta.get("timestamp", 0),
+                })
+            except Exception:
+                continue
+        return results
+
+    def delete_cached(self, filename: str) -> bool:
+        """Delete a cached plan by filename. Returns True if deleted."""
+        path = _CACHE_DIR / filename
+        if path.exists():
+            path.unlink()
+            return True
+        return False
+
+    def load_cached(self, filename: str) -> SimBriefData:
+        """Load a cached plan by filename and return parsed SimBriefData."""
+        path = _CACHE_DIR / filename
+        if not path.exists():
+            raise FileNotFoundError(f"Cached plan not found: {filename}")
+        cache_entry = json.loads(path.read_text(encoding="utf-8"))
+        raw = cache_entry.get("raw", {})
+        data = self._parse(raw)
+        self._cached_data = data
+        logger.info(f"Loaded cached plan: {data.origin}->{data.destination}")
         return data
 
     def _parse(self, raw: Dict) -> SimBriefData:

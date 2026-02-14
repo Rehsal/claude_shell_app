@@ -17,6 +17,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .config_loader import XPlaneConfig
 from .extplane_client import ExtPlaneClient
 from .simbrief_client import SimBriefClient, SimBriefData
 
@@ -493,6 +494,12 @@ class FMSProgrammer:
         if not method:
             raise ValueError(f"Unknown page: {page}. Valid: {list(method_map.keys())}")
 
+        if page == "legs" and XPlaneConfig().get_control_setting("skip_discontinuities"):
+            self._log_msg("LEGS skipped (discontinuity removal disabled)")
+            self._state = FMSState.COMPLETED
+            self._page_results[page] = "completed"
+            return
+
         self._stop_event.clear()
         self._state = FMSState.RUNNING
         self._current_step = page
@@ -564,6 +571,8 @@ class FMSProgrammer:
         try:
             self._ensure_connected()
 
+            skip_disco = XPlaneConfig().get_control_setting("skip_discontinuities")
+
             steps = [
                 ("pos_init", self.program_pos_init),
                 ("init_ref", self.program_init_ref),
@@ -583,6 +592,12 @@ class FMSProgrammer:
                 self._current_step = name
                 self._page_results[name] = "running"
                 self._progress = (i / len(steps)) * 100
+
+                if name == "legs" and skip_disco:
+                    self._log_msg("--- LEGS --- (skipped: discontinuity removal disabled)")
+                    self._page_results[name] = "completed"
+                    continue
+
                 self._log_msg(f"--- {name.upper()} ---")
                 try:
                     method()

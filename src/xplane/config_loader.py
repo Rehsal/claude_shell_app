@@ -160,6 +160,48 @@ class XPlaneConfig:
         """Get fallback profile name (usually 'X-Plane')."""
         return self._config.get("fallback_profile", "X-Plane")
 
+    # ------------------------------------------------------------------
+    # Control page settings (persistent toggles)
+    # ------------------------------------------------------------------
+
+    _CONTROL_DEFAULTS = {
+        "ai_copilot": False,
+        "continuous_listen": False,
+        "speak_response": True,
+        "auto_continue": True,
+        "tts_enabled": True,
+        "annunciator_enabled": False,
+        "skip_discontinuities": False,
+        "hardware_ptt_enabled": False,
+        "hardware_ptt_button_index": 0,
+    }
+
+    @property
+    def control_settings(self) -> dict:
+        """Get all control page settings with defaults."""
+        stored = self._config.get("control_settings", {})
+        merged = dict(self._CONTROL_DEFAULTS)
+        merged.update(stored)
+        return merged
+
+    def get_control_setting(self, key: str):
+        """Get a single control setting by key."""
+        return self.control_settings.get(key, self._CONTROL_DEFAULTS.get(key))
+
+    def set_control_setting(self, key: str, value) -> None:
+        """Set a single control setting and mark config dirty (caller must save)."""
+        if "control_settings" not in self._config:
+            self._config["control_settings"] = dict(self._CONTROL_DEFAULTS)
+        self._config["control_settings"][key] = value
+
+    def update_control_settings(self, updates: dict) -> None:
+        """Update multiple control settings at once (caller must save)."""
+        if "control_settings" not in self._config:
+            self._config["control_settings"] = dict(self._CONTROL_DEFAULTS)
+        for key, value in updates.items():
+            if key in self._CONTROL_DEFAULTS:
+                self._config["control_settings"][key] = value
+
     def get(self, key: str, default=None):
         """Get arbitrary config value by dot-notation key (e.g., 'xplane.install_path')."""
         keys = key.split('.')

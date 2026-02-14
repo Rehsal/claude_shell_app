@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -1674,6 +1674,274 @@ async def fms_cdu_screen():
     import asyncio
     fms = get_fms_programmer()
     return await asyncio.to_thread(fms.read_cdu_screen)
+
+
+# =============================================================================
+# Persistent Settings API
+# =============================================================================
+
+@app.get("/api/settings")
+async def get_settings():
+    """Return all control page settings."""
+    xplane_config.reload()
+    return xplane_config.control_settings
+
+
+@app.post("/api/settings")
+async def update_settings(request: Request):
+    """Update one or more control page settings."""
+    body = await request.json()
+    xplane_config.update_control_settings(body)
+    xplane_config.save()
+    return xplane_config.control_settings
+
+
+# =============================================================================
+# Cached SimBrief Plans API
+# =============================================================================
+
+@app.get("/api/fms/simbrief/cached")
+async def fms_simbrief_cached():
+    """List cached SimBrief plans."""
+    fms = get_fms_programmer()
+    plans = fms._simbrief_client.list_cached()
+    return {"plans": plans}
+
+
+@app.post("/api/fms/simbrief/delete_cached")
+async def fms_simbrief_delete_cached(filename: str = Form(...)):
+    """Delete a cached SimBrief plan and its corresponding X-Plane .fms file."""
+    fms = get_fms_programmer()
+    # Read origin+dest before deleting so we can remove the .fms file
+    route_key = None
+    try:
+        cache_path = Path(fms._simbrief_client._CACHE_DIR) / filename
+        if cache_path.exists():
+            import json as _json
+            meta = _json.loads(cache_path.read_text(encoding="utf-8"))
+            orig = meta.get("origin", "")
+            dest = meta.get("destination", "")
+            if orig and dest:
+                route_key = f"{orig}{dest}"
+    except Exception:
+        pass
+    deleted = fms._simbrief_client.delete_cached(filename)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Cached plan not found")
+    # Also remove the .fms file from X-Plane if no other cache uses this route
+    if route_key and fms.xplane_path:
+        remaining = [p for p in fms._simbrief_client.list_cached()
+                     if f"{p['origin']}{p['destination']}" == route_key]
+        if not remaining:
+            fms_file = Path(fms.xplane_path) / "Output" / "FMS plans" / f"{route_key}.fms"
+            if fms_file.exists():
+                fms_file.unlink()
+    return {"status": "ok"}
+
+
+@app.post("/api/fms/simbrief/load_cached")
+async def fms_simbrief_load_cached(filename: str = Form(...)):
+    """Load a cached SimBrief plan by filename."""
+    fms = get_fms_programmer()
+    try:
+        data = fms._simbrief_client.load_cached(filename)
+        fms._data = data
+        # Also write the FMS plan file for CO ROUTE
+        try:
+            fms._write_fms_plan()
+        except Exception as e:
+            pass
+        return {
+            "status": "ok",
+            "origin": data.origin,
+            "destination": data.destination,
+            "route": data.route,
+            "flight_number": data.flight_number,
+            "cruise_altitude": data.cruise_altitude,
+            "cost_index": data.cost_index,
+            "zfw": data.zfw,
+            "fuel_block": data.fuel_block,
+            "pax_count": data.pax_count,
+            "sid": data.sid,
+            "star": data.star,
+            "flap_setting": data.flap_setting,
+            "v1": data.v1,
+            "vr": data.vr,
+            "v2": data.v2,
+            "trim": data.trim,
+            "assumed_temp": data.assumed_temp,
+            "navlog_count": len(data.navlog),
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Hardware PTT via ExtPlane (joystick button monitoring)
+# =============================================================================
+
+import threading
+import time as _time
+
+_ptt_lock = threading.Lock()
+_ptt_pressed = False
+_ptt_monitoring = False
+_ptt_discover_mode = False
+_ptt_discovered_index = -1
+_ptt_monitor_thread: Optional[threading.Thread] = None
+_ptt_stop_event = threading.Event()
+
+
+def _ptt_monitor_loop():
+    """Poll joystick button values from ExtPlane to detect PTT presses."""
+    global _ptt_pressed
+    button_index = xplane_config.get_control_setting("hardware_ptt_button_index")
+    if button_index < 0:
+        return
+
+    client = get_client()
+    dataref = "sim/joystick/joystick_button_values"
+
+    while not _ptt_stop_event.is_set():
+        try:
+            if not client.is_connected:
+                _time.sleep(0.5)
+                continue
+            val = client.get_dataref(dataref, timeout=0.3)
+            if val is not None:
+                # val is an array of ints — parse it
+                if isinstance(val, (list, tuple)):
+                    buttons = val
+                elif isinstance(val, str) and val.startswith("["):
+                    buttons = json.loads(val)
+                else:
+                    buttons = []
+                if 0 <= button_index < len(buttons):
+                    with _ptt_lock:
+                        _ptt_pressed = bool(int(buttons[button_index]))
+        except Exception:
+            pass
+        _time.sleep(0.05)  # ~20Hz poll rate
+
+
+def _start_ptt_monitor():
+    """Start the PTT monitor thread if not already running."""
+    global _ptt_monitor_thread, _ptt_monitoring
+    if _ptt_monitoring:
+        return
+    _ptt_stop_event.clear()
+    _ptt_monitor_thread = threading.Thread(target=_ptt_monitor_loop, daemon=True, name="ptt-monitor")
+    _ptt_monitor_thread.start()
+    _ptt_monitoring = True
+
+
+def _stop_ptt_monitor():
+    """Stop the PTT monitor thread."""
+    global _ptt_monitoring, _ptt_pressed
+    _ptt_stop_event.set()
+    if _ptt_monitor_thread and _ptt_monitor_thread.is_alive():
+        _ptt_monitor_thread.join(timeout=2)
+    _ptt_monitoring = False
+    with _ptt_lock:
+        _ptt_pressed = False
+
+
+@app.get("/api/ptt/status")
+async def ptt_status():
+    """Get current hardware PTT state."""
+    enabled = xplane_config.get_control_setting("hardware_ptt_enabled")
+    with _ptt_lock:
+        pressed = _ptt_pressed
+    return {"pressed": pressed, "enabled": enabled, "monitoring": _ptt_monitoring}
+
+
+@app.post("/api/ptt/enable")
+async def ptt_enable(enabled: str = Form("true")):
+    """Enable or disable hardware PTT monitoring."""
+    is_enabled = enabled.lower() in ('true', '1', 'on', 'yes')
+    xplane_config.set_control_setting("hardware_ptt_enabled", is_enabled)
+    xplane_config.save()
+
+    if is_enabled:
+        btn_idx = xplane_config.get_control_setting("hardware_ptt_button_index")
+        if btn_idx >= 0:
+            _start_ptt_monitor()
+    else:
+        _stop_ptt_monitor()
+
+    return {"status": "ok", "enabled": is_enabled}
+
+
+@app.post("/api/ptt/discover")
+async def ptt_discover():
+    """Start button discovery mode — watches for any joystick button press."""
+    global _ptt_discover_mode, _ptt_discovered_index
+    _ptt_discover_mode = True
+    _ptt_discovered_index = -1
+
+    def discover():
+        global _ptt_discovered_index, _ptt_discover_mode
+        client = get_client()
+        dataref = "sim/joystick/joystick_button_values"
+        baseline = None
+        timeout = _time.time() + 10  # 10 second timeout
+
+        while _time.time() < timeout and _ptt_discover_mode:
+            try:
+                if not client.is_connected:
+                    _time.sleep(0.2)
+                    continue
+                val = client.get_dataref(dataref, timeout=0.3)
+                if val is None:
+                    _time.sleep(0.1)
+                    continue
+                if isinstance(val, (list, tuple)):
+                    buttons = [int(b) for b in val]
+                elif isinstance(val, str) and val.startswith("["):
+                    buttons = [int(b) for b in json.loads(val)]
+                else:
+                    _time.sleep(0.1)
+                    continue
+
+                if baseline is None:
+                    baseline = buttons[:]
+                    _time.sleep(0.1)
+                    continue
+
+                # Check for any button that went from 0 to 1
+                for i in range(min(len(baseline), len(buttons))):
+                    if baseline[i] == 0 and buttons[i] == 1:
+                        _ptt_discovered_index = i
+                        _ptt_discover_mode = False
+                        return
+
+                baseline = buttons[:]
+            except Exception:
+                pass
+            _time.sleep(0.05)
+        _ptt_discover_mode = False
+
+    threading.Thread(target=discover, daemon=True, name="ptt-discover").start()
+    return {"status": "ok", "message": "Listening for button press (10s timeout)"}
+
+
+@app.get("/api/ptt/discover_result")
+async def ptt_discover_result():
+    """Check if a button has been discovered."""
+    return {
+        "discovering": _ptt_discover_mode,
+        "button_index": _ptt_discovered_index,
+    }
+
+
+@app.post("/api/ptt/save_button")
+async def ptt_save_button(button_index: int = Form(...)):
+    """Save the discovered button index to settings."""
+    xplane_config.set_control_setting("hardware_ptt_button_index", button_index)
+    xplane_config.save()
+    return {"status": "ok", "button_index": button_index}
 
 
 if __name__ == "__main__":
