@@ -52,6 +52,10 @@ async def _extplane_health_loop():
                 if not client.health_check():
                     print("[health] Stale ExtPlane connection detected, reconnecting...")
                     client.reconnect()
+            else:
+                # X-Plane may have restarted — try to reconnect
+                if client.connect():
+                    print("[health] ExtPlane reconnected after disconnect")
         except Exception as e:
             print(f"[health] Error in health check: {e}")
 
