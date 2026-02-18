@@ -12,3 +12,4 @@ status_tmp.json
 .claude/
 ~$*.xlsx
 [0-9A-F][0-9A-F]*
+=*
