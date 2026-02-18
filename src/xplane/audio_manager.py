@@ -155,24 +155,82 @@ class AudioManager:
     # Device enumeration
     # ------------------------------------------------------------------
 
+    # Voicemeeter Potato virtual output B buses appear as Windows
+    # recording (capture) devices named "Voicemeeter Out B1/B2/B3".
+    _VM_MIC_PATTERNS = [
+        ("Voicemeeter Out B1", "Voicemeeter B1"),
+        ("Voicemeeter Out B2", "Voicemeeter B2"),
+        ("Voicemeeter Out B3", "Voicemeeter B3"),
+    ]
+
+    # Voicemeeter Potato virtual input strips appear as Windows
+    # playback devices.
+    _VM_OUTPUT_PATTERNS = [
+        ("Voicemeeter Input",       "Voicemeeter Input"),
+        ("Voicemeeter AUX Input",   "Voicemeeter AUX Input"),
+        ("Voicemeeter VAIO3 Input", "Voicemeeter VAIO3"),
+    ]
+
+    # Prefer WASAPI host API name for low-latency, deduplicated listing
+    _PREFERRED_HOSTAPI = "Windows WASAPI"
+
     def list_devices(self, filter_voicemeeter: bool = True) -> dict:
-        """List available audio devices. Optionally filter for Voicemeeter only."""
+        """List audio devices, preferring Voicemeeter Potato endpoints.
+
+        Mic (capture) is limited to the three B buses (B1/B2/B3).
+        Output (playback) is limited to the three virtual input strips.
+        Uses WASAPI host API to avoid duplicates across MME/DirectSound/WDM-KS.
+        If no Voicemeeter devices are found, falls back to all Windows devices.
+        """
         sd = _import_sounddevice()
         devices = sd.query_devices()
+        hostapis = sd.query_hostapis()
+
+        # Find preferred host API index
+        preferred_api = None
+        for idx, api in enumerate(hostapis):
+            if api["name"] == self._PREFERRED_HOSTAPI:
+                preferred_api = idx
+                break
+
         input_devices = []
         output_devices = []
 
         for i, dev in enumerate(devices):
-            name = dev["name"]
-            if filter_voicemeeter and "voicemeeter" not in name.lower():
+            # Filter to WASAPI only when available
+            if preferred_api is not None and dev["hostapi"] != preferred_api:
                 continue
 
-            entry = {"index": i, "name": name, "hostapi": dev["hostapi"]}
+            name = dev["name"]
 
+            # Mic candidates — Voicemeeter B1/B2/B3
             if dev["max_input_channels"] > 0:
-                input_devices.append(entry)
+                for pattern, label in self._VM_MIC_PATTERNS:
+                    if name.startswith(pattern):
+                        input_devices.append({
+                            "index": i, "name": name, "label": label,
+                        })
+                        break
+
+            # Output candidates — Voicemeeter virtual strips
             if dev["max_output_channels"] > 0:
-                output_devices.append(entry)
+                for pattern, label in self._VM_OUTPUT_PATTERNS:
+                    if name.startswith(pattern):
+                        output_devices.append({
+                            "index": i, "name": name, "label": label,
+                        })
+                        break
+
+        # Fallback: no Voicemeeter found → return all Windows devices
+        if not input_devices and not output_devices:
+            for i, dev in enumerate(devices):
+                if preferred_api is not None and dev["hostapi"] != preferred_api:
+                    continue
+                name = dev["name"]
+                if dev["max_input_channels"] > 0:
+                    input_devices.append({"index": i, "name": name, "label": name})
+                if dev["max_output_channels"] > 0:
+                    output_devices.append({"index": i, "name": name, "label": name})
 
         return {"input_devices": input_devices, "output_devices": output_devices}
 

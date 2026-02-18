@@ -2019,24 +2019,24 @@
                 const devs = await devR.json();
                 const settings = await setR.json();
 
-                // Populate mic dropdown
+                // Populate mic dropdown (B1/B2/B3 or Windows fallback)
                 const micSel = document.getElementById('audioMicSelect');
                 micSel.innerHTML = '<option value="">— Browser default —</option>';
                 (devs.input_devices || []).forEach(d => {
                     const opt = document.createElement('option');
                     opt.value = d.name;
-                    opt.textContent = d.name;
+                    opt.textContent = d.label || d.name;
                     if (d.name === settings.mic_device_name) opt.selected = true;
                     micSel.appendChild(opt);
                 });
 
-                // Populate output dropdown
+                // Populate output dropdown (VAIO/AUX/VAIO3 or Windows fallback)
                 const outSel = document.getElementById('audioOutputSelect');
                 outSel.innerHTML = '<option value="">— Browser default —</option>';
                 (devs.output_devices || []).forEach(d => {
                     const opt = document.createElement('option');
                     opt.value = d.name;
-                    opt.textContent = d.name;
+                    opt.textContent = d.label || d.name;
                     if (d.name === settings.output_device_name) opt.selected = true;
                     outSel.appendChild(opt);
                 });
