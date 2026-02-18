@@ -202,6 +202,44 @@ class XPlaneConfig:
             if key in self._CONTROL_DEFAULTS:
                 self._config["control_settings"][key] = value
 
+    # ------------------------------------------------------------------
+    # Audio device settings (Voicemeeter routing)
+    # ------------------------------------------------------------------
+
+    _AUDIO_DEFAULTS = {
+        "mic_device_name": "",
+        "output_device_name": "",
+        "vosk_model_path": "data/vosk-model-small-en-us-0.15",
+        "confirmation_beep": True,
+        "confirmation_tts": True,
+    }
+
+    @property
+    def audio_settings(self) -> dict:
+        """Get all audio settings with defaults."""
+        stored = self._config.get("audio_settings", {})
+        merged = dict(self._AUDIO_DEFAULTS)
+        merged.update(stored)
+        return merged
+
+    def get_audio_setting(self, key: str):
+        """Get a single audio setting by key."""
+        return self.audio_settings.get(key, self._AUDIO_DEFAULTS.get(key))
+
+    def set_audio_setting(self, key: str, value) -> None:
+        """Set a single audio setting (caller must save)."""
+        if "audio_settings" not in self._config:
+            self._config["audio_settings"] = dict(self._AUDIO_DEFAULTS)
+        self._config["audio_settings"][key] = value
+
+    def update_audio_settings(self, updates: dict) -> None:
+        """Update multiple audio settings at once (caller must save)."""
+        if "audio_settings" not in self._config:
+            self._config["audio_settings"] = dict(self._AUDIO_DEFAULTS)
+        for key, value in updates.items():
+            if key in self._AUDIO_DEFAULTS:
+                self._config["audio_settings"][key] = value
+
     def get(self, key: str, default=None):
         """Get arbitrary config value by dot-notation key (e.g., 'xplane.install_path')."""
         keys = key.split('.')

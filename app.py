@@ -26,6 +26,7 @@ from src.xplane.extplane_client import get_client, ExtPlaneClient
 from src.xplane.script_executor import ScriptExecutor
 from src.xplane.command_executor import execute_command_script
 from src.xplane.fms_programmer import FMSProgrammer
+from src.xplane.audio_manager import AudioManager
 
 load_dotenv()
 
@@ -1797,6 +1798,15 @@ _ptt_discovered_index = -1
 _ptt_monitor_thread: Optional[threading.Thread] = None
 _ptt_stop_event = threading.Event()
 
+# Server-side voice processing state (updated by _handle_server_voice)
+_server_voice_status = {
+    "state": "idle",            # idle | capturing | processing | done | error
+    "recognized_text": "",
+    "result_text": "",
+    "timestamp": 0,
+}
+_server_voice_lock = threading.Lock()
+
 
 def _ptt_monitor_loop():
     """Poll joystick button values from ExtPlane to detect PTT presses."""
@@ -1807,6 +1817,7 @@ def _ptt_monitor_loop():
 
     client = get_client()
     dataref = "sim/joystick/joystick_button_values"
+    was_pressed = False
 
     while not _ptt_stop_event.is_set():
         try:
@@ -1823,8 +1834,29 @@ def _ptt_monitor_loop():
                 else:
                     buttons = []
                 if 0 <= button_index < len(buttons):
+                    now_pressed = bool(int(buttons[button_index]))
                     with _ptt_lock:
-                        _ptt_pressed = bool(int(buttons[button_index]))
+                        _ptt_pressed = now_pressed
+
+                    # Server-side audio: handle press/release transitions
+                    am = get_audio_manager()
+                    if am and am.server_side_active:
+                        if now_pressed and not was_pressed:
+                            # Press transition — start capture
+                            am.start_capture()
+                            with _server_voice_lock:
+                                _server_voice_status["state"] = "capturing"
+                                _server_voice_status["recognized_text"] = ""
+                                _server_voice_status["result_text"] = ""
+                                _server_voice_status["timestamp"] = _time.time()
+                        elif not now_pressed and was_pressed:
+                            # Release transition — stop capture and process
+                            threading.Thread(
+                                target=_handle_server_voice, args=(am,),
+                                daemon=True, name="server-voice"
+                            ).start()
+
+                    was_pressed = now_pressed
         except Exception:
             pass
         _time.sleep(0.05)  # ~20Hz poll rate
@@ -1946,6 +1978,221 @@ async def ptt_save_button(button_index: int = Form(...)):
     xplane_config.set_control_setting("hardware_ptt_button_index", button_index)
     xplane_config.save()
     return {"status": "ok", "button_index": button_index}
+
+
+# =============================================================================
+# Audio Manager — Voicemeeter WASAPI device routing
+# =============================================================================
+
+_audio_manager: Optional[AudioManager] = None
+
+
+def get_audio_manager() -> Optional[AudioManager]:
+    """Get or create the singleton AudioManager, configured from settings."""
+    global _audio_manager
+    if _audio_manager is None:
+        _audio_manager = AudioManager()
+        if not _audio_manager.initialize():
+            print("[audio] AudioManager failed to initialize (missing sounddevice/numpy?)")
+            _audio_manager = None
+            return None
+        # Apply saved settings
+        settings = xplane_config.audio_settings
+        _audio_manager.configure(
+            mic_device_name=settings.get("mic_device_name", ""),
+            output_device_name=settings.get("output_device_name", ""),
+            vosk_model_path=settings.get("vosk_model_path", "data/vosk-model-small-en-us-0.15"),
+            confirmation_beep=settings.get("confirmation_beep", True),
+            confirmation_tts=settings.get("confirmation_tts", True),
+        )
+    return _audio_manager
+
+
+def _handle_server_voice(am: AudioManager):
+    """Process captured audio: recognize → execute → confirm. Runs in background thread."""
+    import urllib.request
+    import urllib.parse
+
+    with _server_voice_lock:
+        _server_voice_status["state"] = "processing"
+        _server_voice_status["timestamp"] = _time.time()
+
+    # Stop capture and get WAV
+    wav_bytes = am.stop_capture()
+    if not wav_bytes:
+        with _server_voice_lock:
+            _server_voice_status["state"] = "error"
+            _server_voice_status["result_text"] = "No audio captured"
+            _server_voice_status["timestamp"] = _time.time()
+        return
+
+    # Recognize
+    text = am.recognize(wav_bytes)
+    with _server_voice_lock:
+        _server_voice_status["recognized_text"] = text or ""
+
+    if not text:
+        with _server_voice_lock:
+            _server_voice_status["state"] = "error"
+            _server_voice_status["result_text"] = "No speech recognized"
+            _server_voice_status["timestamp"] = _time.time()
+        return
+
+    # Execute command via local HTTP
+    try:
+        # Check if AI copilot mode is on
+        ai_mode = xplane_config.get_control_setting("ai_copilot")
+        url = "http://localhost:8000/api/ai/execute" if ai_mode else "http://localhost:8000/api/extplane/execute"
+        data = urllib.parse.urlencode({"text": text}).encode()
+        req = urllib.request.Request(url, data=data, method="POST")
+        resp = urllib.request.urlopen(req, timeout=30)
+        result = json.loads(resp.read().decode())
+
+        response_text = result.get("response", result.get("detail", "Done"))
+        with _server_voice_lock:
+            _server_voice_status["state"] = "done"
+            _server_voice_status["result_text"] = response_text
+            _server_voice_status["timestamp"] = _time.time()
+
+        # Play confirmation
+        am.play_confirmation(response_text)
+
+    except Exception as e:
+        with _server_voice_lock:
+            _server_voice_status["state"] = "error"
+            _server_voice_status["result_text"] = str(e)
+            _server_voice_status["timestamp"] = _time.time()
+
+
+@app.get("/api/audio/status")
+async def audio_status():
+    """Get audio subsystem status."""
+    am = get_audio_manager()
+    if am is None:
+        return {"initialized": False, "error": "AudioManager not available (missing dependencies?)"}
+    return am.get_status()
+
+
+@app.get("/api/audio/devices")
+async def audio_devices():
+    """List available audio devices (Voicemeeter filtered)."""
+    am = get_audio_manager()
+    if am is None:
+        return {"input_devices": [], "output_devices": [], "error": "AudioManager not available"}
+    return am.list_devices(filter_voicemeeter=True)
+
+
+@app.get("/api/audio/settings")
+async def audio_settings_get():
+    """Get current audio settings."""
+    return xplane_config.audio_settings
+
+
+@app.post("/api/audio/settings")
+async def audio_settings_post(request: Request):
+    """Update audio settings."""
+    body = await request.json()
+    xplane_config.update_audio_settings(body)
+    xplane_config.save()
+
+    # Reconfigure audio manager with new settings
+    am = get_audio_manager()
+    if am:
+        settings = xplane_config.audio_settings
+        am.configure(
+            mic_device_name=settings.get("mic_device_name", ""),
+            output_device_name=settings.get("output_device_name", ""),
+            vosk_model_path=settings.get("vosk_model_path", "data/vosk-model-small-en-us-0.15"),
+            confirmation_beep=settings.get("confirmation_beep", True),
+            confirmation_tts=settings.get("confirmation_tts", True),
+        )
+
+    return {"status": "ok", "settings": xplane_config.audio_settings}
+
+
+@app.post("/api/audio/capture/start")
+async def audio_capture_start():
+    """Start WASAPI mic capture (for manual PTT via browser button)."""
+    am = get_audio_manager()
+    if am is None:
+        return {"status": "error", "detail": "AudioManager not available"}
+    ok = am.start_capture()
+    if ok:
+        with _server_voice_lock:
+            _server_voice_status["state"] = "capturing"
+            _server_voice_status["recognized_text"] = ""
+            _server_voice_status["result_text"] = ""
+            _server_voice_status["timestamp"] = _time.time()
+    return {"status": "ok" if ok else "error"}
+
+
+@app.post("/api/audio/capture/stop")
+async def audio_capture_stop():
+    """Stop capture, recognize speech, and return text."""
+    am = get_audio_manager()
+    if am is None:
+        return {"status": "error", "detail": "AudioManager not available"}
+
+    wav_bytes = am.stop_capture()
+    if not wav_bytes:
+        return {"status": "error", "text": "", "detail": "No audio captured"}
+
+    text = am.recognize(wav_bytes)
+    return {"status": "ok", "text": text or ""}
+
+
+@app.post("/api/audio/test/mic/start")
+async def audio_test_mic_start():
+    """Start test mic capture."""
+    am = get_audio_manager()
+    if am is None:
+        return {"status": "error", "detail": "AudioManager not available"}
+    ok = am.start_capture()
+    return {"status": "ok" if ok else "error"}
+
+
+@app.post("/api/audio/test/mic/stop")
+async def audio_test_mic_stop():
+    """Stop test mic capture and return recognized text."""
+    am = get_audio_manager()
+    if am is None:
+        return {"status": "error", "detail": "AudioManager not available"}
+    wav_bytes = am.stop_capture()
+    if not wav_bytes:
+        return {"status": "ok", "text": "", "detail": "No audio captured"}
+    text = am.recognize(wav_bytes)
+    return {"status": "ok", "text": text or ""}
+
+
+@app.get("/api/audio/test/mic/level")
+async def audio_test_mic_level():
+    """Get current mic RMS level for test meter."""
+    am = get_audio_manager()
+    if am is None:
+        return {"level": 0}
+    return {"level": am.get_mic_level()}
+
+
+@app.post("/api/audio/test/output")
+async def audio_test_output():
+    """Play test beep + TTS on selected output device."""
+    am = get_audio_manager()
+    if am is None:
+        return {"status": "error", "detail": "AudioManager not available"}
+
+    def _test():
+        am.play_beep(freq=800, duration=0.15, volume=0.3)
+        am.speak("Test one two three")
+
+    threading.Thread(target=_test, daemon=True, name="audio-test-output").start()
+    return {"status": "ok"}
+
+
+@app.get("/api/audio/voice_status")
+async def audio_voice_status():
+    """Get server-side voice processing state (polled by frontend at 5Hz)."""
+    with _server_voice_lock:
+        return dict(_server_voice_status)
 
 
 if __name__ == "__main__":

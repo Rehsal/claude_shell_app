@@ -201,6 +201,64 @@
         .ai-toggle-box .ai-label { color: #a78bfa; }
         .ai-toggle-box.unavailable .ai-label { color: #64748b; }
 
+        /* Audio Devices section */
+        .audio-section {
+            display: none;
+            padding: 6px 16px;
+            background: #16213e;
+            border-bottom: 1px solid #374151;
+            flex-shrink: 0;
+        }
+        .audio-section.show { display: block; }
+        .audio-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 4px;
+        }
+        .audio-row:last-child { margin-bottom: 0; }
+        .audio-row label {
+            font-size: 0.65rem;
+            color: #9ca3af;
+            width: 42px;
+            flex-shrink: 0;
+        }
+        .audio-row select {
+            flex: 1;
+            padding: 3px 6px;
+            background: #1a1a2e;
+            border: 1px solid #374151;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 0.68rem;
+        }
+        .audio-row select:focus { outline: none; border-color: #e94560; }
+        .audio-level-bar {
+            width: 60px;
+            height: 10px;
+            background: #1a1a2e;
+            border: 1px solid #374151;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .audio-level-fill {
+            height: 100%;
+            width: 0%;
+            background: #10b981;
+            transition: width 0.1s;
+        }
+        .audio-test-result {
+            font-size: 0.62rem;
+            color: #94a3b8;
+            margin-left: 4px;
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .section-label.clickable { cursor: pointer; }
+        .section-label.clickable:hover { color: #94a3b8; }
+
         /* Checklist section */
         .checklist-load-bar {
             display: flex;
@@ -658,6 +716,35 @@
         </div>
     </div>
 
+    <!-- Audio device routing -->
+    <div class="section-label clickable" onclick="toggleAudioSection()">AUDIO DEVICES &#9662;</div>
+    <div class="audio-section" id="audioSection">
+        <div class="audio-row">
+            <label>Mic:</label>
+            <select id="audioMicSelect" onchange="saveAudioDevice('mic')">
+                <option value="">— Browser default —</option>
+            </select>
+            <button class="btn btn-secondary" id="audioTestMicBtn" onclick="testMicToggle()" style="font-size:0.6rem;padding:2px 6px;">Test Mic</button>
+            <div class="audio-level-bar" id="audioLevelBar"><div class="audio-level-fill" id="audioLevelFill"></div></div>
+            <span class="audio-test-result" id="audioMicResult"></span>
+        </div>
+        <div class="audio-row">
+            <label>Output:</label>
+            <select id="audioOutputSelect" onchange="saveAudioDevice('output')">
+                <option value="">— Browser default —</option>
+            </select>
+            <button class="btn btn-secondary" onclick="testOutput()" style="font-size:0.6rem;padding:2px 6px;">Test Output</button>
+            <label class="toggle-label" style="margin-left:6px;">
+                <input type="checkbox" id="audioBeepEnabled" checked onchange="saveAudioOption('confirmation_beep', this.checked)">
+                Beep
+            </label>
+            <label class="toggle-label">
+                <input type="checkbox" id="audioTtsEnabled" checked onchange="saveAudioOption('confirmation_tts', this.checked)">
+                TTS
+            </label>
+        </div>
+    </div>
+
     <!-- FMS section -->
     <div class="section-label">FMS</div>
     <div class="fms-bar">
@@ -808,6 +895,12 @@
         let hwPttPressed = false;
         let hwPttPollTimer = null;
 
+        // Server-side audio mode
+        let serverSideAudio = false;
+        let micTestActive = false;
+        let micLevelTimer = null;
+        let voiceStatusTimer = null;
+
         // ---- Persistent Settings ----
         async function loadSettings() {
             try {
@@ -915,6 +1008,9 @@
                     document.getElementById('cachedPlansDropdown').classList.remove('show');
                 }
             });
+
+            // Audio devices
+            checkAudioMode();
         });
 
         // ---- Connection ----
@@ -1012,21 +1108,71 @@
         const pttBtn = document.getElementById('pttBtn');
         if (recognition) {
             pttBtn.addEventListener('mousedown', () => {
+                if (serverSideAudio) {
+                    fetch('/api/audio/capture/start', { method: 'POST' });
+                    document.getElementById('voiceResult').textContent = '';
+                    document.getElementById('voiceResult').className = 'voice-result';
+                    document.getElementById('voiceStatus').textContent = 'Listening (server)...';
+                    document.getElementById('voiceStatus').className = 'voice-status listening';
+                    return;
+                }
                 document.getElementById('voiceResult').textContent = '';
                 document.getElementById('voiceResult').className = 'voice-result';
                 try { recognition.start(); } catch {}
             });
-            pttBtn.addEventListener('mouseup', () => { recognition.stop(); });
+            pttBtn.addEventListener('mouseup', async () => {
+                if (serverSideAudio) {
+                    document.getElementById('voiceStatus').textContent = 'Processing...';
+                    document.getElementById('voiceStatus').className = 'voice-status processing';
+                    try {
+                        const r = await fetch('/api/audio/capture/stop', { method: 'POST' });
+                        const d = await r.json();
+                        if (d.text) {
+                            document.getElementById('voiceResult').textContent = d.text;
+                            // Execute the recognized command
+                            processVoiceCommand(d.text);
+                        } else {
+                            document.getElementById('voiceStatus').textContent = 'No speech recognized';
+                            document.getElementById('voiceStatus').className = 'voice-status';
+                        }
+                    } catch { document.getElementById('voiceStatus').textContent = 'Capture error'; }
+                    return;
+                }
+                recognition.stop();
+            });
             pttBtn.addEventListener('mouseleave', () => {
+                if (serverSideAudio) return;
                 if (pttBtn.classList.contains('listening') && !continuousMode) recognition.stop();
             });
             pttBtn.addEventListener('touchstart', (e) => {
                 e.preventDefault();
+                if (serverSideAudio) {
+                    fetch('/api/audio/capture/start', { method: 'POST' });
+                    document.getElementById('voiceResult').textContent = '';
+                    document.getElementById('voiceStatus').textContent = 'Listening (server)...';
+                    document.getElementById('voiceStatus').className = 'voice-status listening';
+                    return;
+                }
                 document.getElementById('voiceResult').textContent = '';
                 try { recognition.start(); } catch {}
             });
-            pttBtn.addEventListener('touchend', (e) => {
+            pttBtn.addEventListener('touchend', async (e) => {
                 e.preventDefault();
+                if (serverSideAudio) {
+                    document.getElementById('voiceStatus').textContent = 'Processing...';
+                    document.getElementById('voiceStatus').className = 'voice-status processing';
+                    try {
+                        const r = await fetch('/api/audio/capture/stop', { method: 'POST' });
+                        const d = await r.json();
+                        if (d.text) {
+                            document.getElementById('voiceResult').textContent = d.text;
+                            processVoiceCommand(d.text);
+                        } else {
+                            document.getElementById('voiceStatus').textContent = 'No speech recognized';
+                        }
+                    } catch {}
+                    return;
+                }
                 recognition.stop();
             });
         } else {
@@ -1125,6 +1271,7 @@
         }
 
         function speakVoice(text) {
+            if (serverSideAudio) return;  // server handles confirmation audio
             if (!window.speechSynthesis) return;
             isSpeaking = true;
             const ptt = document.getElementById('pttBtn');
@@ -1791,7 +1938,20 @@
                 hwPttPressed = d.pressed;
                 document.getElementById('hwPttIndicator').classList.toggle('pressed', d.pressed);
 
-                // Trigger voice recognition on press/release
+                // Server-side audio: server handles capture via _ptt_monitor_loop
+                if (serverSideAudio) {
+                    // Just poll voice status for UI updates
+                    if (d.pressed && !wasPressed) {
+                        document.getElementById('voiceResult').textContent = '';
+                        document.getElementById('voiceResult').className = 'voice-result';
+                        document.getElementById('voiceStatus').textContent = 'Listening (server)...';
+                        document.getElementById('voiceStatus').className = 'voice-status listening';
+                        startVoiceStatusPolling();
+                    }
+                    return;
+                }
+
+                // Browser fallback: trigger voice recognition on press/release
                 if (d.pressed && !wasPressed && recognition) {
                     // Button pressed — start listening
                     document.getElementById('voiceResult').textContent = '';
@@ -1841,6 +2001,175 @@
                 btn.textContent = 'Detect';
                 btn.disabled = false;
             }
+        }
+
+        // ---- Audio Devices ----
+        function toggleAudioSection() {
+            const sec = document.getElementById('audioSection');
+            sec.classList.toggle('show');
+            if (sec.classList.contains('show')) loadAudioDevices();
+        }
+
+        async function loadAudioDevices() {
+            try {
+                const [devR, setR] = await Promise.all([
+                    fetch('/api/audio/devices'),
+                    fetch('/api/audio/settings')
+                ]);
+                const devs = await devR.json();
+                const settings = await setR.json();
+
+                // Populate mic dropdown
+                const micSel = document.getElementById('audioMicSelect');
+                micSel.innerHTML = '<option value="">— Browser default —</option>';
+                (devs.input_devices || []).forEach(d => {
+                    const opt = document.createElement('option');
+                    opt.value = d.name;
+                    opt.textContent = d.name;
+                    if (d.name === settings.mic_device_name) opt.selected = true;
+                    micSel.appendChild(opt);
+                });
+
+                // Populate output dropdown
+                const outSel = document.getElementById('audioOutputSelect');
+                outSel.innerHTML = '<option value="">— Browser default —</option>';
+                (devs.output_devices || []).forEach(d => {
+                    const opt = document.createElement('option');
+                    opt.value = d.name;
+                    opt.textContent = d.name;
+                    if (d.name === settings.output_device_name) opt.selected = true;
+                    outSel.appendChild(opt);
+                });
+
+                // Checkboxes
+                document.getElementById('audioBeepEnabled').checked = settings.confirmation_beep !== false;
+                document.getElementById('audioTtsEnabled').checked = settings.confirmation_tts !== false;
+            } catch (e) {
+                console.error('loadAudioDevices error:', e);
+            }
+        }
+
+        async function saveAudioDevice(which) {
+            const key = which === 'mic' ? 'mic_device_name' : 'output_device_name';
+            const selId = which === 'mic' ? 'audioMicSelect' : 'audioOutputSelect';
+            const val = document.getElementById(selId).value;
+            await fetch('/api/audio/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ [key]: val })
+            });
+            checkAudioMode();
+        }
+
+        async function saveAudioOption(key, val) {
+            await fetch('/api/audio/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ [key]: val })
+            });
+        }
+
+        async function testMicToggle() {
+            const btn = document.getElementById('audioTestMicBtn');
+            if (micTestActive) {
+                // Stop test
+                btn.textContent = 'Test Mic';
+                micTestActive = false;
+                if (micLevelTimer) { clearInterval(micLevelTimer); micLevelTimer = null; }
+                document.getElementById('audioLevelFill').style.width = '0%';
+                try {
+                    const r = await fetch('/api/audio/test/mic/stop', { method: 'POST' });
+                    const d = await r.json();
+                    document.getElementById('audioMicResult').textContent = d.text || '(no speech)';
+                } catch {}
+            } else {
+                // Start test
+                document.getElementById('audioMicResult').textContent = '';
+                const r = await fetch('/api/audio/test/mic/start', { method: 'POST' });
+                const d = await r.json();
+                if (d.status === 'ok') {
+                    micTestActive = true;
+                    btn.textContent = 'Stop';
+                    micLevelTimer = setInterval(async () => {
+                        try {
+                            const lr = await fetch('/api/audio/test/mic/level');
+                            const ld = await lr.json();
+                            document.getElementById('audioLevelFill').style.width = (ld.level * 100) + '%';
+                        } catch {}
+                    }, 100);
+                }
+            }
+        }
+
+        async function testOutput() {
+            await fetch('/api/audio/test/output', { method: 'POST' });
+        }
+
+        async function checkAudioMode() {
+            try {
+                const r = await fetch('/api/audio/settings');
+                const d = await r.json();
+                serverSideAudio = !!(d.mic_device_name);
+                if (serverSideAudio && hwPttEnabled) {
+                    startVoiceStatusPolling();
+                } else {
+                    stopVoiceStatusPolling();
+                }
+            } catch {
+                serverSideAudio = false;
+            }
+        }
+
+        function startVoiceStatusPolling() {
+            if (voiceStatusTimer) return;
+            voiceStatusTimer = setInterval(pollVoiceStatus, 200);
+        }
+
+        function stopVoiceStatusPolling() {
+            if (voiceStatusTimer) { clearInterval(voiceStatusTimer); voiceStatusTimer = null; }
+        }
+
+        async function pollVoiceStatus() {
+            if (!serverSideAudio) return;
+            try {
+                const r = await fetch('/api/audio/voice_status');
+                const d = await r.json();
+                const statusEl = document.getElementById('voiceStatus');
+                const resultEl = document.getElementById('voiceResult');
+
+                switch (d.state) {
+                    case 'capturing':
+                        statusEl.textContent = 'Listening (server)...';
+                        statusEl.className = 'voice-status listening';
+                        break;
+                    case 'processing':
+                        statusEl.textContent = 'Processing...';
+                        statusEl.className = 'voice-status processing';
+                        if (d.recognized_text) {
+                            resultEl.textContent = d.recognized_text;
+                            resultEl.className = 'voice-result';
+                        }
+                        break;
+                    case 'done':
+                        statusEl.textContent = 'Hold mic or enable Continuous';
+                        statusEl.className = 'voice-status';
+                        if (d.recognized_text) resultEl.textContent = d.recognized_text;
+                        if (d.result_text) {
+                            resultEl.textContent = d.recognized_text + ' → ' + d.result_text;
+                            resultEl.className = 'voice-result ok';
+                        }
+                        stopVoiceStatusPolling();
+                        break;
+                    case 'error':
+                        statusEl.textContent = d.result_text || 'Error';
+                        statusEl.className = 'voice-status';
+                        resultEl.className = 'voice-result fail';
+                        stopVoiceStatusPolling();
+                        break;
+                    case 'idle':
+                        break;
+                }
+            } catch {}
         }
 
         // ---- Util ----
