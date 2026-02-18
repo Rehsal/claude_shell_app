@@ -88,10 +88,6 @@ class AudioManager:
         self._tts_lock = threading.Lock()
         self._playback_lock = threading.Lock()
 
-        # TTS engine (lazy)
-        self._tts_engine = None
-        self._tts_engine_lock = threading.Lock()
-
         self._initialized = False
 
     def initialize(self) -> bool:
@@ -235,12 +231,32 @@ class AudioManager:
         return {"input_devices": input_devices, "output_devices": output_devices}
 
     def _resolve_device_index(self, name: str, kind: str = "input") -> Optional[int]:
-        """Resolve a device name to its index. Returns None if not found."""
+        """Resolve a device name to its WASAPI index. Falls back to first match."""
         if not name:
             return None
         try:
             sd = _import_sounddevice()
             devices = sd.query_devices()
+            hostapis = sd.query_hostapis()
+
+            # Find WASAPI host API index
+            wasapi_idx = None
+            for idx, api in enumerate(hostapis):
+                if api["name"] == self._PREFERRED_HOSTAPI:
+                    wasapi_idx = idx
+                    break
+
+            # First pass: prefer WASAPI match
+            for i, dev in enumerate(devices):
+                if wasapi_idx is not None and dev["hostapi"] != wasapi_idx:
+                    continue
+                if dev["name"] == name:
+                    if kind == "input" and dev["max_input_channels"] > 0:
+                        return i
+                    if kind == "output" and dev["max_output_channels"] > 0:
+                        return i
+
+            # Fallback: any host API
             for i, dev in enumerate(devices):
                 if dev["name"] == name:
                     if kind == "input" and dev["max_input_channels"] > 0:
@@ -371,6 +387,17 @@ class AudioManager:
     # Beep Generation
     # ------------------------------------------------------------------
 
+    def _get_output_samplerate(self) -> int:
+        """Get the native sample rate of the configured output device."""
+        if self._output_device_index is None:
+            return 48000
+        try:
+            sd = _import_sounddevice()
+            dev = sd.query_devices(self._output_device_index)
+            return int(dev["default_samplerate"])
+        except Exception:
+            return 48000
+
     def play_beep(self, freq: int = 800, duration: float = 0.15,
                   volume: float = 0.3) -> bool:
         """Play a sine-wave beep on the configured output device."""
@@ -382,11 +409,12 @@ class AudioManager:
                 sd = _import_sounddevice()
                 np = _import_numpy()
 
-                t = np.linspace(0, duration, int(SAMPLE_RATE * duration), endpoint=False)
+                sr = self._get_output_samplerate()
+                t = np.linspace(0, duration, int(sr * duration), endpoint=False)
                 tone = np.sin(2 * np.pi * freq * t).astype(np.float32)
 
                 # Fade envelope (10ms fade in/out)
-                fade_samples = int(SAMPLE_RATE * 0.01)
+                fade_samples = int(sr * 0.01)
                 if fade_samples > 0 and len(tone) > 2 * fade_samples:
                     fade_in = np.linspace(0, 1, fade_samples, dtype=np.float32)
                     fade_out = np.linspace(1, 0, fade_samples, dtype=np.float32)
@@ -394,7 +422,7 @@ class AudioManager:
                     tone[-fade_samples:] *= fade_out
 
                 tone *= volume
-                sd.play(tone, samplerate=SAMPLE_RATE, device=self._output_device_index,
+                sd.play(tone, samplerate=sr, device=self._output_device_index,
                         blocking=True)
                 return True
             except Exception as e:
@@ -404,15 +432,6 @@ class AudioManager:
     # ------------------------------------------------------------------
     # TTS
     # ------------------------------------------------------------------
-
-    def _get_tts_engine(self):
-        """Get or create the pyttsx3 TTS engine (must be used from one thread)."""
-        with self._tts_engine_lock:
-            if self._tts_engine is None:
-                pyttsx3 = _import_pyttsx3()
-                self._tts_engine = pyttsx3.init()
-                self._tts_engine.setProperty("rate", 170)
-            return self._tts_engine
 
     def speak(self, text: str) -> bool:
         """Speak text via TTS on the configured output device."""
@@ -424,15 +443,19 @@ class AudioManager:
                 import tempfile
                 sd = _import_sounddevice()
                 np = _import_numpy()
+                pyttsx3 = _import_pyttsx3()
 
-                # Render TTS to WAV file
+                # Render TTS to WAV file (fresh engine each time — pyttsx3
+                # runAndWait() leaves the engine in a stale state)
                 tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
                 tmp_path = tmp.name
                 tmp.close()
 
-                engine = self._get_tts_engine()
+                engine = pyttsx3.init()
+                engine.setProperty("rate", 170)
                 engine.save_to_file(text, tmp_path)
                 engine.runAndWait()
+                engine.stop()
 
                 # Read and play the WAV
                 with wave.open(tmp_path, "rb") as wf:
@@ -451,6 +474,16 @@ class AudioManager:
 
                 if nch > 1:
                     audio = audio.reshape(-1, nch)[:, 0]  # mono
+
+                # Resample to device native rate if needed
+                dev_sr = self._get_output_samplerate()
+                if sr != dev_sr:
+                    # Linear interpolation resample
+                    ratio = dev_sr / sr
+                    new_len = int(len(audio) * ratio)
+                    indices = np.linspace(0, len(audio) - 1, new_len)
+                    audio = np.interp(indices, np.arange(len(audio)), audio).astype(np.float32)
+                    sr = dev_sr
 
                 sd.play(audio, samplerate=sr, device=self._output_device_index,
                         blocking=True)
@@ -536,13 +569,5 @@ class AudioManager:
                     pass
                 self._capture_stream = None
             self._capturing = False
-
-        with self._tts_engine_lock:
-            if self._tts_engine:
-                try:
-                    self._tts_engine.stop()
-                except Exception:
-                    pass
-                self._tts_engine = None
 
         logger.info("AudioManager shut down")

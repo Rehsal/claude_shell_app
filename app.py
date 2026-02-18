@@ -2048,7 +2048,23 @@ def _handle_server_voice(am: AudioManager):
         resp = urllib.request.urlopen(req, timeout=30)
         result = json.loads(resp.read().decode())
 
-        response_text = result.get("response", result.get("detail", "Done"))
+        # Build response text matching frontend format
+        status = result.get("status", "")
+        if status in ("verified", "sent"):
+            tokens = result.get("matched_tokens", [])
+            interpreted = result.get("interpreted")
+            if ai_mode and interpreted:
+                parts = " and ".join(interpreted) if isinstance(interpreted, list) else interpreted
+                response_text = f"{parts} verified"
+            elif tokens:
+                response_text = f"{' '.join(tokens).replace('_', ' ')} verified"
+            else:
+                response_text = "Command verified"
+        elif status == "partial":
+            succeeded = result.get("succeeded", [])
+            response_text = f"{' and '.join(succeeded)} executed" if succeeded else "Partial"
+        else:
+            response_text = result.get("detail", "Not recognized")
         with _server_voice_lock:
             _server_voice_status["state"] = "done"
             _server_voice_status["result_text"] = response_text
@@ -2185,6 +2201,19 @@ async def audio_test_output():
         am.speak("Test one two three")
 
     threading.Thread(target=_test, daemon=True, name="audio-test-output").start()
+    return {"status": "ok"}
+
+
+@app.post("/api/audio/speak")
+async def audio_speak(request: Request):
+    """Speak text via server-side TTS on the configured output device."""
+    am = get_audio_manager()
+    if am is None:
+        return {"status": "error", "detail": "AudioManager not available"}
+    body = await request.json()
+    text = body.get("text", "")
+    if text:
+        am.play_confirmation(text)
     return {"status": "ok"}
 
 

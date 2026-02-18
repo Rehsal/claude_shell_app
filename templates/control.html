@@ -896,7 +896,8 @@
         let hwPttPollTimer = null;
 
         // Server-side audio mode
-        let serverSideAudio = false;
+        let serverSideAudio = false;   // mic capture via server
+        let serverSideOutput = false;  // TTS/beep via server
         let micTestActive = false;
         let micLevelTimer = null;
         let voiceStatusTimer = null;
@@ -929,7 +930,8 @@
                 if (s.continuous_listen && recognition) {
                     continuousMode = true;
                     recognition.continuous = true;
-                    if (!isListening) try { recognition.start(); } catch {}
+                    // Don't start browser recognition if server-side audio is active
+                    if (!isListening && !serverSideAudio) try { recognition.start(); } catch {}
                 }
 
                 // HW PTT
@@ -975,6 +977,10 @@
             setInterval(checkConnection, 10000);
             checkAiAvailability();
 
+            // Check audio mode BEFORE loading settings (so serverSideAudio
+            // is set before continuous mode tries to start browser recognition)
+            await checkAudioMode();
+
             // Load persisted settings and wire toggles
             await loadSettings();
             wireSettingToggles();
@@ -1009,8 +1015,6 @@
                 }
             });
 
-            // Audio devices
-            checkAudioMode();
         });
 
         // ---- Connection ----
@@ -1095,6 +1099,7 @@
             recognition.onend = () => {
                 isListening = false;
                 document.getElementById('pttBtn').classList.remove('listening');
+                if (serverSideAudio) return;  // server handles capture
                 // Restart in continuous mode
                 if (!isSpeaking && continuousMode) {
                     setTimeout(startListeningIfContinuous, 100);
@@ -1193,6 +1198,7 @@
         }
 
         function startListeningIfContinuous() {
+            if (serverSideAudio) return;  // server handles capture
             if (continuousMode && !isListening && !isSpeaking) {
                 try {
                     recognition.continuous = true;
@@ -1234,10 +1240,10 @@
                 } else if (data.status === 'sent') {
                     cls += ' warn';
                     responseText = useAi && data.interpreted
-                        ? `${fmt(data.interpreted)} sent`
+                        ? `${fmt(data.interpreted)} verified`
                         : data.matched_tokens
-                            ? `${data.matched_tokens.join(' ').replace(/_/g, ' ')} sent`
-                            : 'Command sent';
+                            ? `${data.matched_tokens.join(' ').replace(/_/g, ' ')} verified`
+                            : 'Command verified';
                 } else if (data.status === 'partial') {
                     cls += ' warn';
                     responseText = data.succeeded?.length
@@ -1271,7 +1277,15 @@
         }
 
         function speakVoice(text) {
-            if (serverSideAudio) return;  // server handles confirmation audio
+            if (serverSideOutput) {
+                // Route TTS to server output device
+                fetch('/api/audio/speak', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+                return;
+            }
             if (!window.speechSynthesis) return;
             isSpeaking = true;
             const ptt = document.getElementById('pttBtn');
@@ -2109,7 +2123,15 @@
             try {
                 const r = await fetch('/api/audio/settings');
                 const d = await r.json();
+                const wasSsa = serverSideAudio;
                 serverSideAudio = !!(d.mic_device_name);
+                serverSideOutput = !!(d.output_device_name);
+
+                // Stop browser recognition when switching to server-side mic
+                if (serverSideAudio && !wasSsa && recognition && isListening) {
+                    try { recognition.stop(); } catch {}
+                }
+
                 if (serverSideAudio && hwPttEnabled) {
                     startVoiceStatusPolling();
                 } else {
@@ -2117,6 +2139,7 @@
                 }
             } catch {
                 serverSideAudio = false;
+                serverSideOutput = false;
             }
         }
 
