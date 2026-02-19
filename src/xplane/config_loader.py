@@ -207,19 +207,20 @@ class XPlaneConfig:
     # ------------------------------------------------------------------
 
     _AUDIO_DEFAULTS = {
-        "mic_device_name": "",
+        "mic_device_label": "",       # empty = browser default mic
         "output_device_name": "",
-        "vosk_model_path": "data/vosk-model-small-en-us-0.15",
         "confirmation_beep": True,
         "confirmation_tts": True,
     }
 
     @property
     def audio_settings(self) -> dict:
-        """Get all audio settings with defaults."""
+        """Get all audio settings with defaults (only known keys)."""
         stored = self._config.get("audio_settings", {})
         merged = dict(self._AUDIO_DEFAULTS)
-        merged.update(stored)
+        for key in self._AUDIO_DEFAULTS:
+            if key in stored:
+                merged[key] = stored[key]
         return merged
 
     def get_audio_setting(self, key: str):
