@@ -13,3 +13,7 @@ status_tmp.json
 ~$*.xlsx
 [0-9A-F][0-9A-F]*
 =*
+*.exe
+*.spec
+build/
+dist/
