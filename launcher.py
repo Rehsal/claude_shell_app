@@ -1,5 +1,5 @@
 """
-Copilot.exe launcher - starts the CopilotAI web server.
+CopilotAI.exe launcher - starts the CopilotAI web server.
 Finds the venv Python, kills any existing server on port 8000,
 launches uvicorn, and opens the browser.
 """
@@ -60,7 +60,7 @@ def main():
     if not os.path.exists(venv_python):
         print(f"\nERROR: Virtual environment not found!")
         print(f"Expected: {venv_python}")
-        print(f"\nMake sure the venv folder is next to Copilot.exe")
+        print(f"\nMake sure the venv folder is next to CopilotAI.exe")
         input("\nPress Enter to exit...")
         sys.exit(1)
 

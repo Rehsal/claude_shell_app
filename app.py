@@ -7,6 +7,7 @@ Now uses ScriptExecutor for full script execution.
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import uuid
@@ -29,6 +30,22 @@ from src.xplane.fms_programmer import FMSProgrammer
 from src.xplane.audio_manager import AudioManager
 
 load_dotenv()
+
+# ---------------------------------------------------------------------------
+# Suppress noisy polling endpoint access logs (ptt/status, annunciator, fms)
+# ---------------------------------------------------------------------------
+class _PollFilter(logging.Filter):
+    """Drop uvicorn access-log lines for high-frequency polling endpoints."""
+    _QUIET_PATHS = ("/api/ptt/status", "/api/annunciator/alert", "/api/fms/status")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        for p in self._QUIET_PATHS:
+            if p in msg:
+                return False
+        return True
+
+logging.getLogger("uvicorn.access").addFilter(_PollFilter())
 
 # Server version — changes every restart so UI can detect stale cache
 SERVER_VERSION = datetime.now().strftime("%H:%M:%S")
@@ -65,6 +82,15 @@ async def _extplane_health_loop():
 async def start_health_monitor():
     global _health_check_task
     _health_check_task = asyncio.create_task(_extplane_health_loop())
+
+
+@app.on_event("startup")
+async def auto_start_ptt_monitor():
+    """Auto-start the hardware PTT monitor if previously enabled in config."""
+    if xplane_config.get_control_setting("hardware_ptt_enabled"):
+        btn_idx = xplane_config.get_control_setting("hardware_ptt_button_index")
+        if btn_idx is not None and btn_idx >= 0:
+            _start_ptt_monitor()
 
 
 @app.on_event("shutdown")

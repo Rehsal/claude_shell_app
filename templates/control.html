@@ -938,7 +938,13 @@
                 if (s.hardware_ptt_button_index >= 0) {
                     document.getElementById('hwPttDetectBtn').textContent = `#${s.hardware_ptt_button_index}`;
                 }
-                if (hwPttEnabled) startHwPttPolling();
+                if (hwPttEnabled) {
+                    startHwPttPolling();
+                    // Ensure backend monitor is running
+                    const fd = new FormData();
+                    fd.append('enabled', 'true');
+                    fetch('/api/ptt/enable', { method: 'POST', body: fd });
+                }
 
                 return s;
             } catch { return {}; }
