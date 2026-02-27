@@ -1047,12 +1047,22 @@
                 let shouldSpeak = true;
                 const failedPanel = document.getElementById('failedPanel');
 
+                // Build speakable text from matched tokens, replacing placeholders with actual values
+                const formatTokensForSpeech = (tokens, operands) => {
+                    return tokens.map(t => {
+                        if (t === 'NUMBER' && operands && operands.number !== undefined) {
+                            return String(operands.number);
+                        }
+                        return t.replace(/_/g, ' ');
+                    }).join(' ');
+                };
+
                 if (data.status === 'verified') {
                     resultEl.className = 'speech-result show verified';
                     if (useAi && data.interpreted) {
                         responseText = `${formatInterpreted(data.interpreted)} verified`;
                     } else if (data.matched_tokens) {
-                        responseText = `${data.matched_tokens.join(' ').replace(/_/g, ' ')} verified`;
+                        responseText = `${formatTokensForSpeech(data.matched_tokens, data.operands)} verified`;
                     } else {
                         responseText = 'Command verified';
                     }
@@ -1061,7 +1071,7 @@
                     if (useAi && data.interpreted) {
                         responseText = `${formatInterpreted(data.interpreted)} sent`;
                     } else if (data.matched_tokens) {
-                        responseText = `${data.matched_tokens.join(' ').replace(/_/g, ' ')} sent`;
+                        responseText = `${formatTokensForSpeech(data.matched_tokens, data.operands)} sent`;
                     } else {
                         responseText = 'Command sent';
                     }

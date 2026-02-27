@@ -161,7 +161,8 @@ async def index():
 async def copilot():
     """Serve the X-Plane Copilot command browser."""
     with open("templates/commands.html", "r", encoding="utf-8") as f:
-        return f.read()
+        html = f.read()
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.get("/api/projects")

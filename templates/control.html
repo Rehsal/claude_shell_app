@@ -1191,20 +1191,24 @@
                 let shouldSpeak = true;
 
                 const fmt = (interp) => Array.isArray(interp) ? interp.join(' and ') : interp;
+                const fmtTokens = (tokens, operands) => tokens.map(t => {
+                    if (t === 'NUMBER' && operands && operands.number !== undefined) return String(operands.number);
+                    return t.replace(/_/g, ' ');
+                }).join(' ');
 
                 if (data.status === 'verified') {
                     cls += ' ok';
                     responseText = useAi && data.interpreted
                         ? `${fmt(data.interpreted)} verified`
                         : data.matched_tokens
-                            ? `${data.matched_tokens.join(' ').replace(/_/g, ' ')} verified`
+                            ? `${fmtTokens(data.matched_tokens, data.operands)} verified`
                             : 'Command verified';
                 } else if (data.status === 'sent') {
                     cls += ' warn';
                     responseText = useAi && data.interpreted
                         ? `${fmt(data.interpreted)} verified`
                         : data.matched_tokens
-                            ? `${data.matched_tokens.join(' ').replace(/_/g, ' ')} verified`
+                            ? `${fmtTokens(data.matched_tokens, data.operands)} verified`
                             : 'Command verified';
                 } else if (data.status === 'partial') {
                     cls += ' warn';
